@@ -47,6 +47,7 @@ type RoundResult = {
   outcome: number;
   betAmount: string;
   payout: string;
+  actualPayout: string;
   roundId: string;
 };
 type RoundHistoryEntry = RoundResult & {
@@ -460,13 +461,26 @@ export function App() {
   async function playGame(game: GameId, choice: number, bet: string) {
     if (!(await ensurePlayable()) || !wallet.provider || !wallet.address) return;
 
+    const accountBeforePlay = account;
+    const betAmount = Number(bet || "0");
+    const chargedBalance = Math.max(Number(accountBeforePlay.gameBalance) - gameRoundCost(betAmount, settings.entryFeeBps), 0);
+    let optimisticApplied = false;
+    let resultSettled = false;
+
     try {
       setBusy(true);
       setPlaying(true);
       setRoundResult(null);
+      setAccount((current) => ({
+        ...current,
+        gameBalance: String(chargedBalance),
+        sessionSpent: sessionReady ? String(Number(current.sessionSpent) + betAmount) : current.sessionSpent,
+      }));
+      optimisticApplied = true;
 
       const playerSeed = hexlify(randomBytes(32));
       let parsedResult: RoundResult;
+      let exactAccountAfterRound: AccountState | null = null;
 
       if (sessionReady && relayerSession) {
         setStatus({ tone: "info", message: "Quick play is submitting the round on-chain..." });
@@ -492,10 +506,10 @@ export function App() {
 
         parsedResult = parseRelayerRound(payload.round, game);
         if (payload.account?.gameBalance !== undefined && payload.account?.sessionSpent !== undefined) {
-          setAccount({
+          exactAccountAfterRound = {
             gameBalance: String(payload.account.gameBalance),
             sessionSpent: String(payload.account.sessionSpent),
-          });
+          };
         }
       } else {
         setStatus({ tone: "info", message: "Wallet play fallback active. Confirm this round in your wallet." });
@@ -511,11 +525,19 @@ export function App() {
       }
 
       setPlaying(false);
+      resultSettled = true;
       setRoundResult(parsedResult);
+      setAccount((current) => ({
+        ...(exactAccountAfterRound ?? current),
+        gameBalance: exactAccountAfterRound?.gameBalance ?? String(chargedBalance + Number(parsedResult.actualPayout)),
+      }));
       addHistoryEntry(wallet.address, parsedResult);
       setStatus({ tone: parsedResult.status === "win" ? "ok" : parsedResult.status === "draw" ? "warn" : "info", message: roundMessage(parsedResult) });
       await Promise.all([refreshWallet(), loadSettings(wallet.provider), loadAccount(wallet.provider, wallet.address, relayerSession), loadRelayerHealth(), loadLeaderboard(wallet.provider)]);
     } catch (error) {
+      if (optimisticApplied && !resultSettled) {
+        setAccount(accountBeforePlay);
+      }
       setStatus({ tone: "error", message: getErrorMessage(error) });
     } finally {
       setPlaying(false);
@@ -1407,6 +1429,7 @@ function parseRelayerRound(round: {
     playerMove: round.playerMove,
     outcome: round.outcome,
     payout: String(displayPayout),
+    actualPayout: round.payout,
     roundId: round.roundId,
   };
 }
@@ -1449,6 +1472,11 @@ function roundMessage(result: RoundResult) {
 function safeAmount(value: number) {
   if (!Number.isFinite(value)) return "0.0000";
   return value.toFixed(4).replace(/\.?0+$/, "");
+}
+
+function gameRoundCost(betAmount: number, entryFeeBps: number) {
+  if (!Number.isFinite(betAmount) || betAmount <= 0) return 0;
+  return betAmount + (betAmount * entryFeeBps) / 10000;
 }
 
 function splitCountdown(totalSeconds: number) {
