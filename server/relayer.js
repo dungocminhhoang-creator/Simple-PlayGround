@@ -239,7 +239,19 @@ createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/api/health") {
       const relayerAddress = relayer?.address || "";
       const trusted = contract && relayerAddress ? await contract.trustedRelayers(relayerAddress) : false;
-      const seedCommitted = contract ? await contract.serverSeedCommitments(state.currentSeedHash) : false;
+      let seedCommitted = contract ? await contract.serverSeedCommitments(state.currentSeedHash) : false;
+      let seedCommitError = "";
+
+      if (trusted && !seedCommitted) {
+        try {
+          await ensureCommitted();
+          seedCommitted = contract ? await contract.serverSeedCommitments(state.currentSeedHash) : false;
+        } catch (error) {
+          seedCommitError = error instanceof Error ? error.message : String(error);
+          logError(seedCommitError, { step: "commit_seed_healthcheck", wallet: relayer?.address });
+        }
+      }
+
       if (seedCommitted !== state.committed) {
         state = { ...state, committed: seedCommitted };
         saveState(state);
@@ -251,6 +263,7 @@ createServer(async (req, res) => {
         trusted,
         currentSeedHash: state.currentSeedHash,
         seedCommitted,
+        seedCommitError,
       });
       return;
     }

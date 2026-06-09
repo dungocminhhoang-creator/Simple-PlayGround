@@ -594,7 +594,7 @@ export function App() {
       </aside>
 
       <section className="content">
-        <WalletBar wallet={wallet} isAdmin={isAdmin} relayerOnline={relayerReady} onAdmin={() => setPage("admin")} onConnect={handleConnect} onRefresh={() => void refreshChainState()} busy={busy} />
+        <WalletBar wallet={wallet} isAdmin={isAdmin} relayerOnline={relayerHealth.ok} onAdmin={() => setPage("admin")} onConnect={handleConnect} onRefresh={() => void refreshChainState()} busy={busy} />
         <StatusBanner status={status} busy={busy} />
 
         {page === "lobby" && <Lobby account={account} onOpen={setPage} settings={settings} />}
@@ -1076,9 +1076,9 @@ function AccountPanel({
       <div className={sessionReady ? "session-box session-box--ready" : "session-box"}>
         <div className="session-status-row">
           <strong>{sessionReady ? "Quick play ready" : "Quick play setup"}</strong>
-          <span className={relayerHealth.ok && relayerHealth.trusted && relayerHealth.seedCommitted ? "relayer-badge relayer-badge--online" : "relayer-badge relayer-badge--offline"}>
+          <span className={relayerHealth.ok ? "relayer-badge relayer-badge--online" : "relayer-badge relayer-badge--offline"}>
             <i />
-            {relayerHealth.ok && relayerHealth.trusted && relayerHealth.seedCommitted ? "Relayer online" : "Relayer offline"}
+            {relayerHealth.ok ? "Relayer online" : "Relayer offline"}
           </span>
         </div>
         <span>Quick play, no tx sign</span>
