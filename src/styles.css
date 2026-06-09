@@ -1340,6 +1340,12 @@ button:disabled {
   text-align: right;
 }
 
+.leaderboard-table td:nth-child(4) {
+  color: var(--cyan);
+  font-weight: 850;
+  white-space: nowrap;
+}
+
 .criteria-badge {
   display: inline-flex;
   align-items: center;

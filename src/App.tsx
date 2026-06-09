@@ -56,6 +56,7 @@ type RoundHistoryEntry = RoundResult & {
 type LeaderboardRow = {
   rank: number;
   address: string;
+  won: string;
   reward: string;
   playCount: number;
   eligible: boolean;
@@ -73,6 +74,8 @@ type LeaderboardState = {
 
 const SESSION_STORAGE_PREFIX = "simple-playground-relayer-session";
 const HISTORY_STORAGE_PREFIX = "simple-playground-history";
+const AUTO_SESSION_ALLOWANCE = "1000000";
+const AUTO_SESSION_DURATION_SECONDS = 30 * 24 * 60 * 60;
 const emptyWallet: WalletState = { provider: null, address: "", balance: "0", chainId: "" };
 const emptyAccount: AccountState = { gameBalance: "0", sessionSpent: "0" };
 const emptyHealth: RelayerHealth = { ok: false, contractAddress: "", relayerAddress: "", trusted: false, currentSeedHash: "", seedCommitted: false };
@@ -109,7 +112,7 @@ export function App() {
   const [account, setAccount] = useState<AccountState>(emptyAccount);
   const [relayerHealth, setRelayerHealth] = useState<RelayerHealth>(emptyHealth);
   const [relayerSession, setRelayerSession] = useState<RelayerSession | null>(null);
-  const [status, setStatus] = useState<TxStatus>({ tone: "info", message: "Deposit SRW once, sign a relayer session, then play without wallet popups every round." });
+  const [status, setStatus] = useState<TxStatus>({ tone: "info", message: "Deposit SRW once, then Play will approve quick access automatically when needed." });
   const [roundResult, setRoundResult] = useState<RoundResult | null>(null);
   const [roundHistory, setRoundHistory] = useState<Record<GameId, RoundHistoryEntry[]>>({ coin: [], rps: [] });
   const [leaderboard, setLeaderboard] = useState<LeaderboardState>(emptyLeaderboard);
@@ -399,21 +402,20 @@ export function App() {
     }
   }
 
-  async function authorizeRelayerSession(amount: string) {
-    if (!(await ensurePlayable()) || !wallet.provider || !wallet.address) return;
+  async function authorizeRelayerSession() {
+    if (!(await ensurePlayable()) || !wallet.provider || !wallet.address) return null;
     const health = await loadRelayerHealth();
 
     if (!health.relayerAddress || !health.ok || !health.trusted || !health.seedCommitted) {
       setStatus({ tone: "warn", message: "Relayer is offline. Wallet play fallback is available." });
-      return;
+      return null;
     }
 
     try {
-      setBusy(true);
       const signer = await wallet.provider.getSigner();
-      const expiresAt = Math.floor(Date.now() / 1000) + 24 * 60 * 60;
+      const expiresAt = Math.floor(Date.now() / 1000) + AUTO_SESSION_DURATION_SECONDS;
       const nonce = BigInt(`0x${hexlify(randomBytes(16)).slice(2)}`).toString();
-      const allowanceWei = parseEther(amount || "0");
+      const allowanceWei = parseEther(AUTO_SESSION_ALLOWANCE);
       const domain = {
         name: "SimplePlayground",
         version: "1",
@@ -437,25 +439,16 @@ export function App() {
         nonce,
       };
       const signature = await signer.signTypedData(domain, types, value);
-      const session = { relayer: health.relayerAddress, allowance: amount, expiresAt, nonce, signature };
+      const session = { relayer: health.relayerAddress, allowance: AUTO_SESSION_ALLOWANCE, expiresAt, nonce, signature };
       writeStoredSession(wallet.address, session);
       setRelayerSession(session);
-      setStatus({ tone: "ok", message: "Relayer session signed for 24 hours. No gas transfer to a session wallet is required." });
-      await refreshChainState(wallet.provider, wallet.address, session);
+      setAccount((current) => ({ ...current, sessionSpent: "0" }));
+      setStatus({ tone: "ok", message: "Quick play access approved." });
+      return session;
     } catch (error) {
       setStatus({ tone: "error", message: getErrorMessage(error) });
-    } finally {
-      setBusy(false);
+      return null;
     }
-  }
-
-  function clearRelayerSession() {
-    if (wallet.address) {
-      localStorage.removeItem(sessionStorageKey(wallet.address));
-    }
-    setRelayerSession(null);
-    setAccount((current) => ({ ...current, sessionSpent: "0" }));
-    setStatus({ tone: "info", message: "Local relayer session cleared. Previously signed unused allowance cannot be used by the frontend anymore." });
   }
 
   async function playGame(game: GameId, choice: number, bet: string) {
@@ -469,12 +462,29 @@ export function App() {
 
     try {
       setBusy(true);
-      setPlaying(true);
       setRoundResult(null);
+
+      let activeSession = relayerSession;
+      let activeSessionReady = Boolean(
+        relayerReady &&
+        activeSession &&
+        activeSession.expiresAt > Math.floor(Date.now() / 1000) &&
+        Number(activeSession.allowance) - Number(account.sessionSpent) >= betAmount &&
+        (!relayerHealth.relayerAddress || activeSession.relayer.toLowerCase() === relayerHealth.relayerAddress.toLowerCase())
+      );
+
+      if (relayerReady && !activeSessionReady) {
+        setStatus({ tone: "info", message: "Approve quick play access in your wallet." });
+        activeSession = await authorizeRelayerSession();
+        if (!activeSession) return;
+        activeSessionReady = true;
+      }
+
+      setPlaying(true);
       setAccount((current) => ({
         ...current,
         gameBalance: String(chargedBalance),
-        sessionSpent: sessionReady ? String(Number(current.sessionSpent) + betAmount) : current.sessionSpent,
+        sessionSpent: activeSessionReady ? String(Number(current.sessionSpent) + betAmount) : current.sessionSpent,
       }));
       optimisticApplied = true;
 
@@ -482,7 +492,7 @@ export function App() {
       let parsedResult: RoundResult;
       let exactAccountAfterRound: AccountState | null = null;
 
-      if (sessionReady && relayerSession) {
+      if (activeSessionReady && activeSession) {
         setStatus({ tone: "info", message: "Quick play is submitting the round on-chain..." });
         const response = await fetch(`${RELAYER_URL}/api/play`, {
           method: "POST",
@@ -493,10 +503,10 @@ export function App() {
             move: choice,
             betAmount: bet,
             playerSeed,
-            sessionAllowance: relayerSession.allowance,
-            sessionExpiresAt: relayerSession.expiresAt,
-            sessionNonce: relayerSession.nonce,
-            sessionSignature: relayerSession.signature,
+            sessionAllowance: activeSession.allowance,
+            sessionExpiresAt: activeSession.expiresAt,
+            sessionNonce: activeSession.nonce,
+            sessionSignature: activeSession.signature,
           }),
         });
         const payload = await response.json();
@@ -533,7 +543,7 @@ export function App() {
       }));
       addHistoryEntry(wallet.address, parsedResult);
       setStatus({ tone: parsedResult.status === "win" ? "ok" : parsedResult.status === "draw" ? "warn" : "info", message: roundMessage(parsedResult) });
-      await Promise.all([refreshWallet(), loadSettings(wallet.provider), loadAccount(wallet.provider, wallet.address, relayerSession), loadRelayerHealth(), loadLeaderboard(wallet.provider)]);
+      await Promise.all([refreshWallet(), loadSettings(wallet.provider), loadAccount(wallet.provider, wallet.address, activeSession), loadRelayerHealth(), loadLeaderboard(wallet.provider)]);
     } catch (error) {
       if (optimisticApplied && !resultSettled) {
         setAccount(accountBeforePlay);
@@ -611,7 +621,7 @@ export function App() {
         <div className="pool-panel">
           <span>Your Game Balance</span>
           <strong>{Number(account.gameBalance).toFixed(4)} SRW</strong>
-          <small>{sessionReady ? "Quick play ready" : "Wallet play fallback ready"}</small>
+          <small>{sessionReady ? "Quick play ready" : relayerReady ? "Quick play available" : "Wallet play fallback ready"}</small>
         </div>
       </aside>
 
@@ -626,8 +636,6 @@ export function App() {
             account={account}
             busy={busy}
             playing={playing}
-            onAuthorizeRelayerSession={authorizeRelayerSession}
-            onClearRelayerSession={clearRelayerSession}
             onDeposit={depositPlayer}
             onPlay={(choice, bet) => playGame("rps", choice, bet)}
             onWithdraw={withdrawPlayer}
@@ -644,8 +652,6 @@ export function App() {
             account={account}
             busy={busy}
             playing={playing}
-            onAuthorizeRelayerSession={authorizeRelayerSession}
-            onClearRelayerSession={clearRelayerSession}
             onDeposit={depositPlayer}
             onPlay={(choice, bet) => playGame("coin", choice, bet)}
             onWithdraw={withdrawPlayer}
@@ -797,6 +803,7 @@ function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
               <th>Rank</th>
               <th>Wallet</th>
               <th>Criteria</th>
+              <th>Won</th>
               <th>Reward</th>
             </tr>
           </thead>
@@ -806,6 +813,7 @@ function LeaderboardTable({ rows }: { rows: LeaderboardRow[] }) {
                 <td>#{row.rank}</td>
                 <td>{shortAddress(row.address)}</td>
                 <td><span className={row.eligible ? "criteria-badge criteria-badge--ok" : "criteria-badge"}>{row.playCount}/100 games</span></td>
+                <td>{safeAmount(Number(row.won))} SRW</td>
                 <td>{row.eligible ? row.reward : "-"}</td>
               </tr>
             ))}
@@ -823,7 +831,7 @@ function Lobby({ account, onOpen, settings }: { account: AccountState; onOpen: (
         <div className="hero-copy">
           <Brand compact />
           <h1>Simple Playground</h1>
-          <p>Deposit SRW once, sign a relayer session, then play fast mini games while the smart contract tracks balances and settles each round.</p>
+          <p>Deposit SRW once, then press Play. Quick play approval appears automatically when it is needed.</p>
           <div className="metric-row">
             <span><b>{Number(account.gameBalance).toFixed(2)}</b> game SRW</span>
             <span><b>{Number(settings.poolBalance).toFixed(2)}</b> pool SRW</span>
@@ -854,8 +862,6 @@ type GamePageProps = {
   account: AccountState;
   busy: boolean;
   playing: boolean;
-  onAuthorizeRelayerSession: (amount: string) => void;
-  onClearRelayerSession: () => void;
   onDeposit: (amount: string) => void;
   onPlay: (choice: number, bet: string) => void;
   onWithdraw: (amount: string) => void;
@@ -935,8 +941,6 @@ function GameSurface({
   busy,
   choices,
   history,
-  onAuthorizeRelayerSession,
-  onClearRelayerSession,
   onDeposit,
   onPlay,
   onWithdraw,
@@ -954,7 +958,6 @@ function GameSurface({
 }: GameSurfaceProps) {
   const [depositAmount, setDepositAmount] = useState("5");
   const [withdrawAmount, setWithdrawAmount] = useState("1");
-  const [sessionAllowanceAmount, setSessionAllowanceAmount] = useState("5");
   const betAmount = Number(bet || "0");
   const visiblePrize = betAmount * 2;
   const totalCost = betAmount + (betAmount * settings.entryFeeBps) / 10000;
@@ -963,7 +966,8 @@ function GameSurface({
   const hasBalance = Number(account.gameBalance) >= totalCost;
   const hasPoolLiquidity = Number(settings.poolBalance) >= worstCasePayout;
   const isWithinLimits = betAmount >= Number(settings.minBet) && betAmount <= Number(settings.maxBet);
-  const canUseQuickPlay = sessionReady && sessionRemaining >= betAmount;
+  const canUseQuickPlay = relayerHealth.ok && relayerHealth.trusted && relayerHealth.seedCommitted;
+  const hasSignedQuickPlay = sessionReady && sessionRemaining >= betAmount;
   const playMode = canUseQuickPlay ? "quick" : "wallet";
   const canPlay = betAmount > 0 && hasBalance && hasPoolLiquidity && isWithinLimits;
   const blockReason =
@@ -1009,24 +1013,19 @@ function GameSurface({
           account={account}
           busy={busy}
           depositAmount={depositAmount}
-          onAuthorizeRelayerSession={onAuthorizeRelayerSession}
-          onClearRelayerSession={onClearRelayerSession}
           onDeposit={onDeposit}
           onWithdraw={onWithdraw}
           relayerHealth={relayerHealth}
-          relayerSession={relayerSession}
-          sessionAllowanceAmount={sessionAllowanceAmount}
           sessionReady={sessionReady}
           setDepositAmount={setDepositAmount}
-          setSessionAllowanceAmount={setSessionAllowanceAmount}
           setWithdrawAmount={setWithdrawAmount}
           withdrawAmount={withdrawAmount}
         />
         <div className={playMode === "quick" ? "play-mode play-mode--quick" : "play-mode play-mode--wallet"}>
           <span className={playMode === "quick" ? "status-dot status-dot--online" : "status-dot status-dot--offline"} />
           <div>
-            <strong>{playMode === "quick" ? "Quick play active" : "Wallet play fallback"}</strong>
-            <small>{playMode === "quick" ? "No wallet popup for each round." : "Confirm each round in your wallet."}</small>
+            <strong>{playMode === "quick" ? (hasSignedQuickPlay ? "Quick play ready" : "Quick play available") : "Wallet play fallback"}</strong>
+            <small>{playMode === "quick" ? (hasSignedQuickPlay ? "No wallet popup for each round." : "First Play asks for one quick access signature.") : "Confirm each round in your wallet."}</small>
           </div>
         </div>
         <div className="receipt">
@@ -1050,36 +1049,25 @@ function AccountPanel({
   account,
   busy,
   depositAmount,
-  onAuthorizeRelayerSession,
-  onClearRelayerSession,
   onDeposit,
   onWithdraw,
   relayerHealth,
-  relayerSession,
-  sessionAllowanceAmount,
   sessionReady,
   setDepositAmount,
-  setSessionAllowanceAmount,
   setWithdrawAmount,
   withdrawAmount,
 }: {
   account: AccountState;
   busy: boolean;
   depositAmount: string;
-  onAuthorizeRelayerSession: (amount: string) => void;
-  onClearRelayerSession: () => void;
   onDeposit: (amount: string) => void;
   onWithdraw: (amount: string) => void;
   relayerHealth: RelayerHealth;
-  relayerSession: RelayerSession | null;
-  sessionAllowanceAmount: string;
   sessionReady: boolean;
   setDepositAmount: (amount: string) => void;
-  setSessionAllowanceAmount: (amount: string) => void;
   setWithdrawAmount: (amount: string) => void;
   withdrawAmount: string;
 }) {
-  const sessionRemaining = Math.max(Number(relayerSession?.allowance ?? "0") - Number(account.sessionSpent), 0);
   return (
     <div className="account-panel">
       <div className="account-header">
@@ -1097,19 +1085,13 @@ function AccountPanel({
       </div>
       <div className={sessionReady ? "session-box session-box--ready" : "session-box"}>
         <div className="session-status-row">
-          <strong>{sessionReady ? "Quick play ready" : "Quick play setup"}</strong>
+          <strong>{sessionReady ? "Quick play ready" : "Quick play"}</strong>
           <span className={relayerHealth.ok ? "relayer-badge relayer-badge--online" : "relayer-badge relayer-badge--offline"}>
             <i />
             {relayerHealth.ok ? "Relayer online" : "Relayer offline"}
           </span>
         </div>
-        <span>Quick play, no tx sign</span>
-        <small>Remaining {sessionRemaining.toFixed(4)} SRW</small>
-        <div className="mini-form">
-          <input aria-label="Allowed balance in SRW" placeholder="Allowed balance" title="Maximum SRW this session can spend from your game balance" value={sessionAllowanceAmount} onChange={(event) => setSessionAllowanceAmount(event.target.value)} />
-          <button className="secondary-action" disabled={busy || !relayerHealth.ok || !relayerHealth.trusted || !relayerHealth.seedCommitted} onClick={() => onAuthorizeRelayerSession(sessionAllowanceAmount)} type="button">Allowed Balance</button>
-        </div>
-        {relayerSession && <button className="ghost-action" disabled={busy} onClick={onClearRelayerSession} type="button">Clear Local Session</button>}
+        <span>{sessionReady ? "No tx sign for each round." : relayerHealth.ok && relayerHealth.trusted && relayerHealth.seedCommitted ? "First Play asks for one access signature." : "Wallet fallback is available."}</span>
       </div>
     </div>
   );
@@ -1390,6 +1372,7 @@ function buildLeaderboardRows(players: readonly string[], scores: readonly bigin
     .map((address, index) => ({
       rank: index + 1,
       address,
+      won: formatEther(scores[index] ?? 0n),
       reward: leaderboardRewardLabel(index + 1),
       playCount: Number(playCounts[index] ?? 0n),
       eligible: Number(playCounts[index] ?? 0n) >= 100,
