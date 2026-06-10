@@ -109,6 +109,7 @@ const SESSION_STORAGE_PREFIX = "simple-playground-relayer-session";
 const HISTORY_STORAGE_PREFIX = "simple-playground-history";
 const CAT_HISTORY_STORAGE_PREFIX = "simple-playground-cat-race-history";
 const WALLET_LOGOUT_STORAGE_KEY = "simple-playground-wallet-logged-out";
+const PAGE_STORAGE_KEY = "simple-playground-active-page";
 const AUTO_SESSION_ALLOWANCE = "1000000";
 const AUTO_SESSION_DURATION_SECONDS = 30 * 24 * 60 * 60;
 const CAT_RACE_PREPARE_SECONDS = 30;
@@ -168,8 +169,19 @@ const games = [
   },
 ];
 
+const restorablePages: Page[] = ["lobby", "leaderboard", "rps", "coin", "cat", "admin"];
+
+function readStoredPage(): Page {
+  const stored = localStorage.getItem(PAGE_STORAGE_KEY);
+  return restorablePages.includes(stored as Page) ? stored as Page : "lobby";
+}
+
+function writeStoredPage(nextPage: Page) {
+  localStorage.setItem(PAGE_STORAGE_KEY, nextPage);
+}
+
 export function App() {
-  const [page, setPage] = useState<Page>("lobby");
+  const [page, setPage] = useState<Page>(() => readStoredPage());
   const [wallet, setWallet] = useState<WalletState>(emptyWallet);
   const [settings, setSettings] = useState<SettingsState>(initialSettings);
   const [account, setAccount] = useState<AccountState>(emptyAccount);
@@ -181,7 +193,7 @@ export function App() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardState>(emptyLeaderboard);
   const [catRace, setCatRace] = useState<CatRaceState>(emptyCatRace);
   const [catRaceHistory, setCatRaceHistory] = useState<CatRaceHistoryEntry[]>([]);
-  const [now, setNow] = useState(Math.floor(Date.now() / 1000));
+  const [now, setNow] = useState(Date.now() / 1000);
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [successPopup, setSuccessPopup] = useState<SuccessPopupState>(null);
@@ -208,7 +220,7 @@ export function App() {
   }, [wallet.address]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    const interval = window.setInterval(() => setNow(Date.now() / 1000), 100);
     return () => window.clearInterval(interval);
   }, []);
 
@@ -228,9 +240,9 @@ export function App() {
 
   useEffect(() => {
     if (!DEMO_MODE) return;
-    const updateDemo = () => setCatRace(buildDemoCatRace(Math.floor(Date.now() / 1000), wallet.address));
+    const updateDemo = () => setCatRace(buildDemoCatRace(Date.now() / 1000, wallet.address));
     updateDemo();
-    const interval = window.setInterval(updateDemo, 1000);
+    const interval = window.setInterval(updateDemo, 100);
     return () => window.clearInterval(interval);
   }, [wallet.address]);
 
@@ -311,7 +323,9 @@ export function App() {
   useEffect(() => {
     if (page === "admin" && !isAdmin) {
       setPage("lobby");
+      return;
     }
+    writeStoredPage(page);
   }, [isAdmin, page]);
 
   async function loadRelayerHealth() {
@@ -1667,15 +1681,16 @@ function CatRaceArena({
   const raceProgress = catRaceRaceProgress(catRace, now, displayPhase);
   const finishVisible = displayPhase === "finish" || (displayPhase === "race" && raceProgress >= 0.72);
   const revealWinner = winnerKnown && displayPhase === "finish";
+  const crossingFinish = winnerKnown && (displayPhase === "finish" || (displayPhase === "race" && raceProgress >= 0.96));
   const finishApproach = Math.min(Math.max((raceProgress - 0.72) / 0.28, 0), 1);
   const startLineX = displayPhase === "prepare" ? 7 : 7 - raceProgress * 52;
   const startLineOpacity = displayPhase === "prepare" ? 1 : Math.max(1 - raceProgress * 4, 0);
-  const finishLineX = displayPhase === "finish" ? 95 : 126 - finishApproach * 31;
+  const finishLineX = crossingFinish ? 95 : 126 - finishApproach * 31;
   const popupCountdown = splitCountdown(phaseRemaining);
 
   return (
     <div
-      className={`cat-race-arena cat-race-arena--${displayPhase} ${finishVisible ? "cat-race-arena--finish-visible" : ""} ${revealWinner ? "cat-race-arena--finished" : ""}`}
+      className={`cat-race-arena cat-race-arena--${displayPhase} ${finishVisible ? "cat-race-arena--finish-visible" : ""} ${crossingFinish ? "cat-race-arena--crossing-finish" : ""} ${revealWinner ? "cat-race-arena--finished" : ""}`}
       style={{ "--race-progress": raceProgress, "--start-line-x": `${startLineX}%`, "--start-line-opacity": startLineOpacity, "--finish-line-x": `${finishLineX}%` } as CSSProperties}
     >
       <div className="race-event-strip">
@@ -1696,6 +1711,7 @@ function CatRaceArena({
       )}
       {[0, 1, 2, 3, 4].map((cat) => {
         const motion = catMotion(cat, raceProgress, winnerKnown ? finishWinnerCat : -1, displayPhase === "prepare" ? "prepare" : "race", now);
+        const isCrossingWinner = crossingFinish && cat === finishWinnerCat;
         const isWinner = revealWinner && cat === finishWinnerCat;
         const isLoser = revealWinner && cat !== finishWinnerCat;
         return (
@@ -1705,7 +1721,7 @@ function CatRaceArena({
               <span className="start-line" />
               <span className="finish-line" />
               <div
-                className={`cat-runner cat-runner--${cat} ${displayPhase === "race" ? "cat-runner--racing" : ""} ${isWinner ? "cat-runner--winner cat-runner--finish-winner" : ""} ${isLoser ? "cat-runner--loser-cry" : ""}`}
+                className={`cat-runner cat-runner--${cat} ${displayPhase === "race" ? "cat-runner--racing" : ""} ${isCrossingWinner ? "cat-runner--winner" : ""} ${isWinner ? "cat-runner--finish-winner" : ""} ${isLoser ? "cat-runner--loser-cry" : ""}`}
                 style={{ "--cat-x": `${motion.position}%`, "--cat-bob": `${motion.bob}px`, "--cat-color": catColor(cat), "--cat-accent": catAccent(cat) } as CSSProperties}
               >
                 <span className="cat-speed"><Gauge size={12} /> {motion.speed} km/h</span>
@@ -2176,7 +2192,11 @@ function catMotion(cat: number, progress: number, winnerCat: number, phase: CatR
     ? Math.pow(lateSprint, 3) * 27
     : -Math.pow(lateSprint, 2) * (5 + ((cat + 1) % 4) * 2);
   const rawPosition = fieldPosition + finalPush;
-  const position = progress >= 0.985 ? finishPosition : Math.min(Math.max(rawPosition, 11), finishPosition);
+  const finalCrossing = winner ? Math.min(Math.max((progress - 0.96) / 0.04, 0), 1) : 0;
+  const settledPosition = progress >= 0.96
+    ? rawPosition + (finishPosition - rawPosition) * finalCrossing
+    : rawPosition;
+  const position = progress >= 0.998 ? finishPosition : Math.min(Math.max(settledPosition, 11), finishPosition);
   const runPulse = Math.sin(now * 0.018 + cat * 1.7) * 4;
   const speed = Math.max(Math.round(38 + progress * 18 + wave * 1.2 + runPulse + (winner ? lateSprint * 18 : 0)), 14);
   return { position, speed, bob: Math.sin(now * 0.012 + cat) * 4 };
@@ -2292,10 +2312,11 @@ function addEtherStrings(a: string, b: string) {
 }
 
 function splitCountdown(totalSeconds: number) {
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = Math.floor(totalSeconds % 60);
+  const wholeSeconds = Math.ceil(Math.max(totalSeconds, 0));
+  const days = Math.floor(wholeSeconds / 86400);
+  const hours = Math.floor((wholeSeconds % 86400) / 3600);
+  const minutes = Math.floor((wholeSeconds % 3600) / 60);
+  const seconds = Math.floor(wholeSeconds % 60);
   return {
     days: String(days),
     hours: padTime(hours),

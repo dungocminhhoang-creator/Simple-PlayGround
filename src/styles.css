@@ -1198,6 +1198,17 @@ button:disabled {
   animation: finishPulse 0.75s ease-out 3;
 }
 
+.cat-race-arena--crossing-finish .finish-gate {
+  border-color: rgba(57, 242, 154, 0.86);
+  box-shadow:
+    0 0 34px rgba(57, 242, 154, 0.28),
+    inset 0 0 22px rgba(52, 228, 244, 0.16);
+}
+
+.cat-race-arena--crossing-finish .finish-line {
+  box-shadow: 0 0 20px rgba(57, 242, 154, 0.42);
+}
+
 .betting-popup {
   position: absolute;
   left: 50%;
@@ -1421,7 +1432,7 @@ button:disabled {
   display: grid;
   place-items: center;
   transform: translate(-50%, calc(-50% + var(--cat-bob)));
-  transition: left 1s cubic-bezier(0.2, 0.9, 0.2, 1), transform 0.45s ease;
+  transition: left 0.18s linear, transform 0.18s ease;
 }
 
 .cat-runner--racing .cat-sprite {
