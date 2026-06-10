@@ -1254,6 +1254,26 @@ button:disabled {
   text-transform: uppercase;
 }
 
+.betting-popup .last-winner-label {
+  display: grid;
+  gap: 4px;
+  color: #9ab9bf;
+  letter-spacing: 0.13em;
+}
+
+.betting-popup .last-winner-label b {
+  width: fit-content;
+  color: color-mix(in srgb, var(--cat-color), white 16%);
+  font-size: 34px;
+  line-height: 0.98;
+  letter-spacing: 0;
+  text-transform: none;
+  text-shadow:
+    0 0 18px color-mix(in srgb, var(--cat-color), transparent 22%),
+    0 0 44px color-mix(in srgb, var(--cat-accent), transparent 40%);
+  animation: lastWinnerGlow 1.25s ease-in-out infinite alternate;
+}
+
 .betting-popup strong {
   color: var(--green);
   font-size: 30px;
@@ -1331,43 +1351,21 @@ button:disabled {
   font-size: 13px;
 }
 
-.cat-lane {
-  position: relative;
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-}
-
-.lane-label {
+.race-track-stage {
   position: relative;
   z-index: 3;
-  display: grid;
-  gap: 3px;
-  color: #c6dfe4;
-  font-weight: 800;
-}
-
-.lane-label small {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.lane-track {
-  position: relative;
-  z-index: 2;
-  height: 78px;
+  min-height: 420px;
   border: 1px solid rgba(125, 229, 236, 0.13);
   border-radius: var(--radius);
-  overflow: visible;
+  overflow: hidden;
   background:
-    linear-gradient(90deg, rgba(52, 228, 244, 0.09), transparent 28%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 48%, rgba(0, 0, 0, 0.18)),
+    repeating-linear-gradient(180deg, transparent 0 76px, rgba(125, 229, 236, 0.12) 76px 78px),
+    linear-gradient(90deg, rgba(52, 228, 244, 0.1), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 52%, rgba(0, 0, 0, 0.2)),
     rgba(0, 0, 0, 0.28);
 }
 
-.lane-track::before {
+.race-track-stage::before {
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -1379,20 +1377,133 @@ button:disabled {
   opacity: 0.55;
 }
 
-.cat-race-arena--race .lane-track::before {
+.cat-race-arena--race .race-track-stage::before {
   animation: laneDashScroll 0.8s linear infinite;
 }
 
-.lane-track::after {
+.race-track-stage::after {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 11px;
+  bottom: 18px;
   z-index: 0;
   height: 2px;
   content: "";
   background: linear-gradient(90deg, transparent, rgba(52, 228, 244, 0.34), transparent);
   opacity: 0.7;
+}
+
+.track-boost-stripes,
+.track-neon-line,
+.track-finish-glow {
+  position: absolute;
+  pointer-events: none;
+}
+
+.track-boost-stripes {
+  inset: 0;
+  z-index: 1;
+  background:
+    repeating-linear-gradient(
+      102deg,
+      transparent 0 54px,
+      rgba(52, 228, 244, 0.13) 54px 58px,
+      rgba(57, 242, 154, 0.1) 58px 62px,
+      transparent 62px 130px
+    );
+  background-size: 260px 100%;
+  opacity: 0;
+}
+
+.cat-race-arena--race .track-boost-stripes {
+  opacity: 0.74;
+  animation: trackBoostRush 0.52s linear infinite;
+}
+
+.track-neon-line {
+  left: -20%;
+  right: -20%;
+  z-index: 2;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(52, 228, 244, 0.75), rgba(57, 242, 154, 0.52), transparent);
+  box-shadow: 0 0 16px rgba(52, 228, 244, 0.36);
+  opacity: 0;
+}
+
+.track-neon-line--top {
+  top: 22%;
+}
+
+.track-neon-line--bottom {
+  bottom: 19%;
+}
+
+.cat-race-arena--race .track-neon-line--top {
+  animation: trackNeonSweep 1.8s linear infinite;
+}
+
+.cat-race-arena--race .track-neon-line--bottom {
+  animation: trackNeonSweep 1.8s linear infinite reverse;
+  animation-delay: -0.64s;
+}
+
+.track-finish-glow {
+  top: 0;
+  bottom: 0;
+  left: calc(var(--finish-line-x) - 7%);
+  z-index: 1;
+  width: 14%;
+  background: radial-gradient(ellipse at center, rgba(57, 242, 154, 0.22), rgba(52, 228, 244, 0.12) 42%, transparent 70%);
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: left 1s cubic-bezier(0.2, 0.9, 0.2, 1), opacity 0.4s ease;
+}
+
+.cat-race-arena--finish-visible .track-finish-glow {
+  opacity: 1;
+}
+
+.cat-race-arena--crossing-finish .track-finish-glow {
+  animation: finishGlowBurst 0.56s ease-in-out infinite alternate;
+}
+
+.cat-lane {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--lane-y);
+  height: 72px;
+  z-index: 3;
+}
+
+.lane-label {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  z-index: 10;
+  display: grid;
+  gap: 3px;
+  min-width: 84px;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--cat-color, #34e4f4), transparent 72%);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--cat-color, #34e4f4), white 22%);
+  background: rgba(0, 0, 0, 0.5);
+  font-weight: 800;
+  text-shadow: 0 0 12px color-mix(in srgb, var(--cat-color, #34e4f4), transparent 44%);
+  transform: translateY(-50%);
+}
+
+.lane-label b {
+  color: color-mix(in srgb, var(--cat-color, #34e4f4), white 18%);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.lane-label small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .start-line,
@@ -1431,12 +1542,52 @@ button:disabled {
   z-index: 8;
   display: grid;
   place-items: center;
-  transform: translate(-50%, calc(-50% + var(--cat-bob)));
-  transition: left 0.18s linear, transform 0.18s ease;
+  opacity: var(--cat-opacity, 1);
+  transform: translate(-50%, calc(-50% + var(--cat-bob))) scale(var(--cat-scale, 1));
+  transition: left 0.1s linear, opacity 0.1s linear, transform 0.1s linear;
+}
+
+.cat-runner::before,
+.cat-runner::after {
+  position: absolute;
+  pointer-events: none;
+  content: "";
+}
+
+.cat-runner--racing::before {
+  right: 74px;
+  top: 33px;
+  z-index: -1;
+  width: 86px;
+  height: 16px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--cat-color), transparent 58%));
+  filter: blur(4px);
+  opacity: 0.76;
+  animation: catSpeedTrail 0.2s ease-in-out infinite alternate;
+}
+
+.cat-runner--racing::after {
+  right: 78px;
+  top: 58px;
+  z-index: -1;
+  width: 46px;
+  height: 8px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, color-mix(in srgb, var(--cat-color), transparent 50%), transparent 70%);
+  filter: blur(2px);
+  opacity: 0.72;
+  animation: catDustPulse 0.24s ease-in-out infinite alternate;
+}
+
+.cat-runner--loser-cry::before,
+.cat-runner--loser-cry::after {
+  opacity: 0;
+  animation: none;
 }
 
 .cat-runner--racing .cat-sprite {
-  animation: catBodyRun 0.32s ease-in-out infinite alternate;
+  animation: catSpriteFloat 0.26s ease-in-out infinite alternate;
 }
 
 .cat-runner--winner .cat-sprite {
@@ -1452,10 +1603,6 @@ button:disabled {
   opacity: 0;
 }
 
-.cat-runner--finish-winner .cat-sprite {
-  animation: catWinnerExit 4.8s cubic-bezier(0.2, 0.92, 0.18, 1) forwards;
-}
-
 .cat-runner--loser-cry .cat-sprite {
   animation: catLoserRoll 1.05s ease-in-out infinite;
   filter: saturate(0.86) brightness(0.86);
@@ -1464,21 +1611,17 @@ button:disabled {
 .cat-sprite {
   position: relative;
   display: block;
-  width: 82px;
-  height: 46px;
+  width: 130px;
+  height: 76px;
+  overflow: visible;
+  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--cat-color), transparent 68%));
 }
 
 .cat-sprite--mini {
+  width: 86px;
+  height: 52px;
   transform: scale(0.72);
-}
-
-.cat-body,
-.cat-head,
-.cat-tail,
-.cat-leg {
-  position: absolute;
-  display: block;
-  background: var(--cat-color, #34e4f4);
+  transform-origin: left center;
 }
 
 .cat-sprite--0 { --cat-color: #34e4f4; --cat-accent: #9af8ff; }
@@ -1488,87 +1631,178 @@ button:disabled {
 .cat-sprite--4 { --cat-color: #f4fbff; --cat-accent: #34e4f4; }
 
 .cat-body {
-  left: 16px;
-  top: 14px;
-  width: 48px;
-  height: 24px;
-  border-radius: 45% 52% 44% 48%;
-  box-shadow: inset -8px -6px 0 rgba(0, 0, 0, 0.16), 0 0 18px color-mix(in srgb, var(--cat-color), transparent 58%);
+  position: absolute;
+  left: 22px;
+  top: 19px;
+  z-index: 3;
+  width: 70px;
+  height: 36px;
+  border-radius: 58% 50% 48% 54%;
+  background:
+    radial-gradient(circle at 24% 24%, rgba(255, 255, 255, 0.5) 0 10%, transparent 11%),
+    radial-gradient(ellipse at 68% 78%, rgba(255, 255, 255, 0.2) 0 18%, transparent 19%),
+    linear-gradient(135deg, color-mix(in srgb, var(--cat-accent), white 28%), var(--cat-color) 58%, color-mix(in srgb, var(--cat-color), #001517 14%));
+  box-shadow:
+    inset -9px -7px 0 rgba(0, 0, 0, 0.12),
+    inset 8px 7px 0 rgba(255, 255, 255, 0.08),
+    0 0 20px color-mix(in srgb, var(--cat-color), transparent 56%);
 }
 
 .cat-head {
-  right: 4px;
+  position: absolute;
+  right: 5px;
   top: 7px;
-  width: 25px;
-  height: 25px;
-  border-radius: 48% 48% 45% 45%;
-  box-shadow: inset -4px -4px 0 rgba(0, 0, 0, 0.14);
+  z-index: 5;
+  width: 43px;
+  height: 40px;
+  border-radius: 54% 54% 48% 50%;
+  background:
+    radial-gradient(circle at 35% 20%, rgba(255, 255, 255, 0.5) 0 9%, transparent 10%),
+    linear-gradient(135deg, color-mix(in srgb, var(--cat-accent), white 22%), var(--cat-color) 64%);
+  box-shadow:
+    inset -5px -5px 0 rgba(0, 0, 0, 0.11),
+    inset 5px 5px 0 rgba(255, 255, 255, 0.08);
 }
 
 .cat-head::before,
 .cat-head::after {
   position: absolute;
-  top: -7px;
+  top: -10px;
   content: "";
-  border-right: 7px solid transparent;
-  border-left: 7px solid transparent;
-  border-bottom: 12px solid var(--cat-color);
+  border-right: 10px solid transparent;
+  border-left: 10px solid transparent;
+  border-bottom: 17px solid color-mix(in srgb, var(--cat-color), white 4%);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--cat-color), transparent 72%));
 }
 
 .cat-head::before {
   left: 1px;
-  transform: rotate(-18deg);
+  transform: rotate(-20deg);
 }
 
 .cat-head::after {
-  right: 0;
-  transform: rotate(18deg);
+  right: 1px;
+  transform: rotate(20deg);
 }
 
 .cat-head b {
   position: absolute;
-  top: 9px;
-  width: 3px;
-  height: 3px;
+  top: 15px;
+  width: 7px;
+  height: 9px;
   border-radius: 50%;
-  background: #001517;
+  background:
+    radial-gradient(circle at 34% 24%, #fff 0 18%, transparent 19%),
+    #001517;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.26);
 }
 
 .cat-head b:first-child {
-  left: 8px;
+  left: 10px;
 }
 
 .cat-head b:last-child {
-  right: 7px;
+  right: 10px;
 }
 
 .cat-head em {
   position: absolute;
-  left: 10px;
-  bottom: 5px;
+  left: 17px;
+  bottom: 8px;
   display: block;
-  width: 8px;
-  height: 3px;
+  width: 9px;
+  height: 5px;
   border-radius: 999px;
-  background: #001517;
+  background:
+    radial-gradient(circle at 50% 0, #001517 0 34%, transparent 35%),
+    transparent;
   opacity: 0.9;
 }
 
+.cat-head em::after {
+  position: absolute;
+  left: 2px;
+  top: 4px;
+  width: 5px;
+  height: 4px;
+  border-bottom: 2px solid rgba(0, 21, 23, 0.78);
+  border-radius: 0 0 999px 999px;
+  content: "";
+}
+
 .cat-sprite--happy .cat-head em {
-  height: 5px;
+  height: 7px;
   border-radius: 0 0 999px 999px;
   background: transparent;
   border-bottom: 2px solid #001517;
 }
 
 .cat-sprite--cry .cat-head em {
-  width: 10px;
+  left: 16px;
+  width: 12px;
   height: 2px;
   transform: rotate(-8deg);
+  background: #001517;
 }
 
 .cat-sprite--cry .cat-head::after {
   filter: drop-shadow(-7px 22px 0 #34e4f4);
+}
+
+.cat-cheek {
+  position: absolute;
+  top: 23px;
+  width: 7px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 141, 205, 0.6);
+  box-shadow: 0 0 8px rgba(255, 141, 205, 0.26);
+}
+
+.cat-cheek--left {
+  left: 6px;
+}
+
+.cat-cheek--right {
+  right: 6px;
+}
+
+.cat-whisker {
+  position: absolute;
+  top: 24px;
+  width: 15px;
+  height: 8px;
+  opacity: 0.72;
+}
+
+.cat-whisker::before,
+.cat-whisker::after {
+  position: absolute;
+  left: 0;
+  width: 15px;
+  height: 1px;
+  border-radius: 999px;
+  background: rgba(0, 21, 23, 0.68);
+  content: "";
+}
+
+.cat-whisker::before {
+  top: 1px;
+  transform: rotate(11deg);
+}
+
+.cat-whisker::after {
+  bottom: 1px;
+  transform: rotate(-11deg);
+}
+
+.cat-whisker--left {
+  left: -9px;
+  transform: scaleX(-1);
+}
+
+.cat-whisker--right {
+  right: -9px;
 }
 
 .cat-sprite--scared .cat-head b {
@@ -1585,14 +1819,19 @@ button:disabled {
 }
 
 .cat-tail {
-  left: 0;
-  top: 8px;
-  width: 26px;
-  height: 10px;
-  border-radius: 999px;
+  position: absolute;
+  left: 3px;
+  top: 16px;
+  z-index: 2;
+  width: 43px;
+  height: 15px;
+  border-radius: 999px 999px 999px 60%;
   transform-origin: right center;
-  transform: rotate(-26deg);
-  background: var(--cat-accent);
+  transform: rotate(-28deg);
+  background:
+    radial-gradient(circle at 12% 50%, color-mix(in srgb, var(--cat-accent), white 30%) 0 22%, transparent 23%),
+    linear-gradient(90deg, color-mix(in srgb, var(--cat-accent), white 14%), var(--cat-color));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--cat-color), transparent 66%);
 }
 
 .cat-runner--racing .cat-tail {
@@ -1600,33 +1839,52 @@ button:disabled {
 }
 
 .cat-leg {
-  top: 34px;
-  width: 7px;
-  height: 16px;
+  position: absolute;
+  top: 45px;
+  z-index: 4;
+  width: 10px;
+  height: 22px;
   border-radius: 999px;
   transform-origin: top center;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--cat-accent), white 8%), var(--cat-color));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--cat-color), transparent 68%);
 }
 
 .cat-leg--front {
-  right: 18px;
+  right: 30px;
 }
 
 .cat-leg--back {
-  left: 27px;
+  left: 39px;
+}
+
+.cat-leg--lower {
+  opacity: 0.82;
+  top: 47px;
+  z-index: 1;
+  filter: brightness(0.86);
 }
 
 .cat-runner--racing .cat-leg--front {
-  animation: catLegFront 0.22s linear infinite;
+  animation: catLegFront 0.18s linear infinite;
 }
 
 .cat-runner--racing .cat-leg--back {
-  animation: catLegBack 0.22s linear infinite;
+  animation: catLegBack 0.18s linear infinite;
+}
+
+.cat-runner--racing .cat-leg--front.cat-leg--lower {
+  animation-delay: -0.09s;
+}
+
+.cat-runner--racing .cat-leg--back.cat-leg--lower {
+  animation-delay: -0.09s;
 }
 
 .cat-speed {
   position: absolute;
-  left: 60px;
-  top: -24px;
+  left: 90px;
+  top: -18px;
   z-index: 14;
   display: inline-flex;
   align-items: center;
@@ -2484,6 +2742,15 @@ button:disabled {
   }
 }
 
+@keyframes catSpriteFloat {
+  from {
+    transform: translateY(1px) rotate(-1deg);
+  }
+  to {
+    transform: translateY(-3px) rotate(1deg);
+  }
+}
+
 @keyframes catTailRun {
   from {
     transform: rotate(-34deg);
@@ -2565,35 +2832,23 @@ button:disabled {
   }
 }
 
+@keyframes lastWinnerGlow {
+  from {
+    filter: brightness(1);
+    transform: translateY(0) scale(1);
+  }
+  to {
+    filter: brightness(1.18);
+    transform: translateY(-1px) scale(1.025);
+  }
+}
+
 @keyframes popupClockPulse {
   0%, 100% {
     transform: scale(1);
   }
   50% {
     transform: scale(1.08);
-  }
-}
-
-@keyframes catWinnerExit {
-  0% {
-    opacity: 1;
-    transform: translateX(0) translateY(0) scale(1) rotate(0deg);
-  }
-  28% {
-    opacity: 1;
-    transform: translateX(38px) translateY(-8px) scale(1.13) rotate(-6deg);
-  }
-  58% {
-    opacity: 1;
-    transform: translateX(96px) translateY(2px) scale(1.06) rotate(5deg);
-  }
-  82% {
-    opacity: 0.92;
-    transform: translateX(142px) translateY(-4px) scale(0.9) rotate(2deg);
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(190px) translateY(-8px) scale(0.68) rotate(0deg);
   }
 }
 
@@ -2650,6 +2905,65 @@ button:disabled {
   }
   to {
     background-position: -220px 0, -320px 0;
+  }
+}
+
+@keyframes trackBoostRush {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: -260px 0;
+  }
+}
+
+@keyframes trackNeonSweep {
+  0% {
+    opacity: 0;
+    transform: translateX(34%) scaleX(0.78);
+  }
+  18% {
+    opacity: 0.74;
+  }
+  78% {
+    opacity: 0.46;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-34%) scaleX(1.08);
+  }
+}
+
+@keyframes finishGlowBurst {
+  from {
+    filter: brightness(1);
+    opacity: 0.72;
+  }
+  to {
+    filter: brightness(1.42);
+    opacity: 1;
+  }
+}
+
+@keyframes catSpeedTrail {
+  from {
+    transform: translateX(0) scaleX(0.86);
+    opacity: 0.52;
+  }
+  to {
+    transform: translateX(-8px) scaleX(1.08);
+    opacity: 0.86;
+  }
+}
+
+@keyframes catDustPulse {
+  from {
+    transform: translateX(0) scale(0.76);
+    opacity: 0.42;
+  }
+  to {
+    transform: translateX(-11px) scale(1.12);
+    opacity: 0.76;
   }
 }
 
@@ -2765,11 +3079,6 @@ button:disabled {
 
   .cat-bet-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .cat-lane {
-    grid-template-columns: 1fr;
-    gap: 6px;
   }
 
   .cat-race-arena {

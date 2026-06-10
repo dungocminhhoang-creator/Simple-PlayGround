@@ -76,7 +76,7 @@ type LeaderboardState = {
   previousRows: LeaderboardRow[];
 };
 type CatRacePhase = "prepare" | "race" | "settled";
-type CatRaceDisplayPhase = "prepare" | "race" | "finish";
+type CatRaceDisplayPhase = "prepare" | "race";
 type CatRaceLeaderboardRow = {
   rank: number;
   address: string;
@@ -114,7 +114,6 @@ const AUTO_SESSION_ALLOWANCE = "1000000";
 const AUTO_SESSION_DURATION_SECONDS = 30 * 24 * 60 * 60;
 const CAT_RACE_PREPARE_SECONDS = 30;
 const CAT_RACE_RUN_SECONDS = 30;
-const CAT_RACE_FINISH_SECONDS = 5;
 const emptyWallet: WalletState = { provider: null, address: "", balance: "0", chainId: "" };
 const emptyAccount: AccountState = { gameBalance: "0", sessionSpent: "0" };
 const emptyHealth: RelayerHealth = { ok: false, contractAddress: "", relayerAddress: "", trusted: false, currentSeedHash: "", seedCommitted: false };
@@ -1565,7 +1564,6 @@ function CatRacePage({
   const worstCasePayout = betAmount * 5 - (betAmount * 5 * settings.winFeeBps) / 10000;
   const displayPhase = catRaceDisplayPhase(catRace, now);
   const isPrepare = displayPhase === "prepare";
-  const isFinish = displayPhase === "finish";
   const canBet = isPrepare
     && betAmount > 0
     && betAmount >= Number(settings.minBet)
@@ -1591,14 +1589,14 @@ function CatRacePage({
           {DEMO_MODE && <div className="demo-pill">Demo Mode</div>}
           <div className={`race-phase race-phase--${displayPhase}`}>
             <Flag size={17} />
-            {displayPhase === "prepare" ? "Prepare for race" : displayPhase === "race" ? "Race running" : "Finish celebration"}
+            {displayPhase === "prepare" ? "Prepare for race" : "Race running"}
           </div>
         </div>
 
         {!isPrepare && (
           <div className={urgentCountdown ? "race-clock race-clock--urgent" : "race-clock"}>
             <strong>{countdown.minutes}:{countdown.seconds}</strong>
-            <span>{displayPhase === "race" ? "Finish line countdown" : "Next race starts soon"}</span>
+            <span>Finish line countdown</span>
           </div>
         )}
 
@@ -1642,7 +1640,7 @@ function CatRacePage({
             <div><dt>Race pool</dt><dd>{safeAmount(totalRacePool)} SRW</dd></div>
           </dl>
         </div>
-        {!isPrepare && <div className="play-warning">{isFinish ? "The winner is crossing the finish line. Next betting round starts soon." : "Betting is locked while the cats are racing."}</div>}
+        {!isPrepare && <div className="play-warning">Betting is locked while the cats are racing.</div>}
         {isPrepare && !canBet && <div className="play-warning">Check game balance, pool liquidity, and bet limits before placing a race bet.</div>}
         <button className="primary-action" disabled={busy || !canBet} onClick={() => onBet(selectedCat, bet)} type="button">
           {busy ? <Loader2 className="spin" size={18} /> : <Cat size={18} />}
@@ -1676,13 +1674,14 @@ function CatRaceArena({
   phaseRemaining: number;
   urgentCountdown: boolean;
 }) {
-  const finishWinnerCat = displayPhase === "finish" && catRace.phase === "prepare" ? catRace.previousWinnerCat : catRace.winnerCat;
+  const finishWinnerCat = catRace.winnerCat;
   const winnerKnown = finishWinnerCat < 5;
   const raceProgress = catRaceRaceProgress(catRace, now, displayPhase);
-  const finishVisible = displayPhase === "finish" || (displayPhase === "race" && raceProgress >= 0.72);
-  const revealWinner = winnerKnown && displayPhase === "finish";
-  const crossingFinish = winnerKnown && (displayPhase === "finish" || (displayPhase === "race" && raceProgress >= 0.96));
-  const finishApproach = Math.min(Math.max((raceProgress - 0.72) / 0.28, 0), 1);
+  const finishVisible = displayPhase === "race" && raceProgress >= 0.66;
+  const revealWinner = winnerKnown && displayPhase === "race" && raceProgress >= 0.92;
+  const crossingFinish = revealWinner;
+  const finishApproach = Math.min(Math.max((raceProgress - 0.66) / 0.26, 0), 1);
+  const previousWinnerKnown = catRace.previousRaceId > 0 && catRace.previousWinnerCat < 5;
   const startLineX = displayPhase === "prepare" ? 7 : 7 - raceProgress * 52;
   const startLineOpacity = displayPhase === "prepare" ? 1 : Math.max(1 - raceProgress * 4, 0);
   const finishLineX = crossingFinish ? 95 : 126 - finishApproach * 31;
@@ -1694,43 +1693,59 @@ function CatRaceArena({
       style={{ "--race-progress": raceProgress, "--start-line-x": `${startLineX}%`, "--start-line-opacity": startLineOpacity, "--finish-line-x": `${finishLineX}%` } as CSSProperties}
     >
       <div className="race-event-strip">
-        <strong>{displayPhase === "race" ? "Road sprint" : displayPhase === "finish" ? "Finish moment" : "Choose your racer"}</strong>
-        <span>{displayPhase === "race" ? "Start line falls behind. Finish gate approaches." : displayPhase === "finish" ? "Winner crosses. Next round starts in seconds." : "Choose a cat and place your SRW bet."}</span>
+        <strong>{displayPhase === "race" ? (revealWinner ? "Finish line" : "Road sprint") : "Choose your racer"}</strong>
+        <span>{displayPhase === "race" ? (revealWinner ? "Winner crosses now. Other cats stop on the track." : "Start line falls behind. Finish gate approaches.") : "Choose a cat and place your SRW bet."}</span>
       </div>
       <div className="finish-gate"><span>FINISH</span></div>
       {displayPhase === "prepare" && (
         <div className={urgentCountdown ? "betting-popup betting-popup--urgent" : "betting-popup"}>
           <img alt="" src="/assets/cat-winner-laugh.png" />
           <div>
-            <span>{catRace.previousRaceId > 0 ? `Last winner: ${catName(catRace.previousWinnerCat)}` : "Cat Race is open"}</span>
+            {previousWinnerKnown ? (
+              <span className="last-winner-label">
+                Last winner
+                <b style={{ "--cat-color": catColor(catRace.previousWinnerCat), "--cat-accent": catAccent(catRace.previousWinnerCat) } as CSSProperties}>
+                  {catName(catRace.previousWinnerCat)}
+                </b>
+              </span>
+            ) : (
+              <span>Cat Race is open</span>
+            )}
             <strong>{urgentCountdown ? "Last chance to bet" : "Pick your cat now"}</strong>
             <p>{urgentCountdown ? "Betting closes in the final seconds." : "Choose a racer, set your SRW amount, and join the next 30-second sprint."}</p>
           </div>
           <b className={urgentCountdown ? "betting-popup-clock betting-popup-clock--urgent" : "betting-popup-clock"}>{popupCountdown.minutes}:{popupCountdown.seconds}</b>
         </div>
       )}
-      {[0, 1, 2, 3, 4].map((cat) => {
-        const motion = catMotion(cat, raceProgress, winnerKnown ? finishWinnerCat : -1, displayPhase === "prepare" ? "prepare" : "race", now);
-        const isCrossingWinner = crossingFinish && cat === finishWinnerCat;
-        const isWinner = revealWinner && cat === finishWinnerCat;
-        const isLoser = revealWinner && cat !== finishWinnerCat;
-        return (
-          <div className="cat-lane" key={cat}>
-            <span className="lane-label">{catName(cat)}<small>{safeAmount(Number(catRace.totalBets[cat] ?? "0"))} SRW</small></span>
-            <div className="lane-track">
-              <span className="start-line" />
-              <span className="finish-line" />
+      <div className="race-track-stage">
+        <span className="track-boost-stripes" aria-hidden="true" />
+        <span className="track-neon-line track-neon-line--top" aria-hidden="true" />
+        <span className="track-neon-line track-neon-line--bottom" aria-hidden="true" />
+        <span className="track-finish-glow" aria-hidden="true" />
+        <span className="start-line" />
+        <span className="finish-line" />
+        {[0, 1, 2, 3, 4].map((cat) => {
+          const motion = catMotion(cat, raceProgress, winnerKnown ? finishWinnerCat : -1, displayPhase === "prepare" ? "prepare" : "race", now, revealWinner);
+          const isCrossingWinner = crossingFinish && cat === finishWinnerCat;
+          const isWinner = revealWinner && cat === finishWinnerCat;
+          const isLoser = revealWinner && cat !== finishWinnerCat;
+          return (
+            <div className="cat-lane" key={cat} style={{ "--lane-y": `${11 + cat * 18.8}%`, "--cat-color": catColor(cat), "--cat-accent": catAccent(cat) } as CSSProperties}>
+              <span className="lane-label">
+                <b>{catName(cat)}</b>
+                <small>{safeAmount(Number(catRace.totalBets[cat] ?? "0"))} SRW</small>
+              </span>
               <div
-                className={`cat-runner cat-runner--${cat} ${displayPhase === "race" ? "cat-runner--racing" : ""} ${isCrossingWinner ? "cat-runner--winner" : ""} ${isWinner ? "cat-runner--finish-winner" : ""} ${isLoser ? "cat-runner--loser-cry" : ""}`}
-                style={{ "--cat-x": `${motion.position}%`, "--cat-bob": `${motion.bob}px`, "--cat-color": catColor(cat), "--cat-accent": catAccent(cat) } as CSSProperties}
+                className={`cat-runner cat-runner--${cat} ${displayPhase !== "prepare" && !isLoser ? "cat-runner--racing" : ""} ${isCrossingWinner ? "cat-runner--winner" : ""} ${isWinner ? "cat-runner--finish-winner" : ""} ${isLoser ? "cat-runner--loser-cry" : ""}`}
+                style={{ "--cat-x": `${motion.position}%`, "--cat-bob": `${motion.bob}px`, "--cat-scale": motion.scale, "--cat-opacity": motion.opacity, "--cat-color": catColor(cat), "--cat-accent": catAccent(cat) } as CSSProperties}
               >
                 <span className="cat-speed"><Gauge size={12} /> {motion.speed} km/h</span>
                 <CatSprite cat={cat} expression={isWinner ? "happy" : isLoser ? "cry" : ""} />
               </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
       {revealWinner && (
         <div className="race-fireworks" aria-hidden="true">
           <i /><i /><i /><i /><i />
@@ -1739,7 +1754,7 @@ function CatRaceArena({
       {revealWinner && (
         <div className="race-winner-banner">
           <strong>{catName(finishWinnerCat)} wins</strong>
-          <span>The winner crossed the finish line. Next race starts now.</span>
+          <span>The winner crossed the finish line.</span>
         </div>
       )}
     </div>
@@ -1747,13 +1762,30 @@ function CatRaceArena({
 }
 
 function CatSprite({ cat, expression = "", mini = false }: { cat: number; expression?: string; mini?: boolean }) {
+  const classes = [
+    "cat-sprite",
+    mini ? "cat-sprite--mini" : "",
+    `cat-sprite--${cat}`,
+    expression ? `cat-sprite--${expression}` : "",
+  ].filter(Boolean).join(" ");
+
   return (
-    <span className={mini ? `cat-sprite cat-sprite--mini cat-sprite--${cat} cat-sprite--${expression}` : `cat-sprite cat-sprite--${cat} cat-sprite--${expression}`} aria-hidden="true">
+    <span className={classes} aria-hidden="true">
       <i className="cat-tail" />
+      <i className="cat-leg cat-leg--back cat-leg--upper" />
+      <i className="cat-leg cat-leg--back cat-leg--lower" />
       <i className="cat-body" />
-      <i className="cat-head"><b /><b /><em /></i>
-      <i className="cat-leg cat-leg--front" />
-      <i className="cat-leg cat-leg--back" />
+      <i className="cat-leg cat-leg--front cat-leg--upper" />
+      <i className="cat-leg cat-leg--front cat-leg--lower" />
+      <i className="cat-head">
+        <b />
+        <b />
+        <em />
+        <span className="cat-cheek cat-cheek--left" />
+        <span className="cat-cheek cat-cheek--right" />
+        <span className="cat-whisker cat-whisker--left" />
+        <span className="cat-whisker cat-whisker--right" />
+      </i>
     </span>
   );
 }
@@ -2081,14 +2113,6 @@ function catRaceDisplayPhase(catRace: CatRaceState, now: number): CatRaceDisplay
     return "prepare";
   }
 
-  if (now >= catRace.endsAt && now < catRace.endsAt + CAT_RACE_FINISH_SECONDS) {
-    return "finish";
-  }
-
-  if (catRace.phase === "prepare" && catRace.previousRaceId > 0 && now >= catRace.startedAt && now < catRace.startedAt + CAT_RACE_FINISH_SECONDS) {
-    return "finish";
-  }
-
   if (now >= catRace.bettingEndsAt && now < catRace.endsAt) {
     return "race";
   }
@@ -2097,10 +2121,6 @@ function catRaceDisplayPhase(catRace: CatRaceState, now: number): CatRaceDisplay
 }
 
 function catRacePhaseRemaining(catRace: CatRaceState, now: number, displayPhase: CatRaceDisplayPhase) {
-  if (displayPhase === "finish") {
-    const phaseStart = now >= catRace.endsAt ? catRace.endsAt : catRace.startedAt;
-    return Math.max((phaseStart || now) + CAT_RACE_FINISH_SECONDS - now, 0);
-  }
   if (displayPhase === "prepare") {
     const phaseEnd = catRace.bettingEndsAt || (catRace.startedAt || now) + CAT_RACE_PREPARE_SECONDS;
     return Math.max(phaseEnd - now, 0);
@@ -2113,7 +2133,6 @@ function catRacePhaseRemaining(catRace: CatRaceState, now: number, displayPhase:
 }
 
 function catRaceRaceProgress(catRace: CatRaceState, now: number, displayPhase: CatRaceDisplayPhase) {
-  if (displayPhase === "finish") return 1;
   if (displayPhase !== "race") return 0;
   const raceStartedAt = catRace.bettingEndsAt || now;
   return Math.min(Math.max((now - raceStartedAt) / CAT_RACE_RUN_SECONDS, 0), 1);
@@ -2136,7 +2155,7 @@ function catAccent(index: number) {
 }
 
 function buildDemoCatRace(now: number, address: string): CatRaceState {
-  const cycle = CAT_RACE_PREPARE_SECONDS + CAT_RACE_RUN_SECONDS + CAT_RACE_FINISH_SECONDS;
+  const cycle = CAT_RACE_PREPARE_SECONDS + CAT_RACE_RUN_SECONDS;
   const base = Math.floor(now / cycle) * cycle;
   const elapsed = now - base;
   const raceId = Math.floor(now / cycle) + 1;
@@ -2177,29 +2196,40 @@ function buildDemoCatRace(now: number, address: string): CatRaceState {
   };
 }
 
-function catMotion(cat: number, progress: number, winnerCat: number, phase: CatRacePhase, now: number) {
+function catMotion(cat: number, progress: number, winnerCat: number, phase: CatRacePhase, now: number, raceResolved: boolean) {
   if (phase === "prepare") {
-    return { position: 11, speed: 0, bob: 0 };
+    return { position: 18, speed: 0, bob: 0, opacity: 1, scale: 1 };
   }
   const winner = cat === winnerCat;
   const seed = (cat + 1) * 17;
   const wave = Math.sin(progress * 18 + seed + now * 0.01) * 3.2;
   const drift = Math.sin(progress * 9 + seed * 0.4) * 2.1;
-  const fieldPosition = 18 + progress * 48 + wave + drift;
+  const fieldPosition = 20 + progress * 46 + wave + drift;
   const lateSprint = Math.min(Math.max((progress - 0.9) / 0.1, 0), 1);
-  const finishPosition = winner ? 95 : 75 + ((cat * 4 + 3) % 13);
+  const finishExit = winner ? Math.min(Math.max((progress - 0.96) / 0.04, 0), 1) : 0;
+  const finishPosition = winner ? 96 : 72 + ((cat * 4 + 3) % 12);
   const finalPush = winner
-    ? Math.pow(lateSprint, 3) * 27
-    : -Math.pow(lateSprint, 2) * (5 + ((cat + 1) % 4) * 2);
+    ? Math.pow(lateSprint, 2.2) * 31
+    : -Math.pow(lateSprint, 2) * (8 + ((cat + 1) % 4) * 2);
   const rawPosition = fieldPosition + finalPush;
-  const finalCrossing = winner ? Math.min(Math.max((progress - 0.96) / 0.04, 0), 1) : 0;
-  const settledPosition = progress >= 0.96
+  const finalCrossing = winner ? Math.min(Math.max((progress - 0.9) / 0.02, 0), 1) : 0;
+  const settledPosition = progress >= 0.9
     ? rawPosition + (finishPosition - rawPosition) * finalCrossing
     : rawPosition;
-  const position = progress >= 0.998 ? finishPosition : Math.min(Math.max(settledPosition, 11), finishPosition);
+  const basePosition = raceResolved && !winner ? finishPosition : Math.min(Math.max(settledPosition, 11), finishPosition);
+  const position = winner ? basePosition + Math.pow(finishExit, 0.72) * 30 : Math.min(basePosition, finishPosition);
   const runPulse = Math.sin(now * 0.018 + cat * 1.7) * 4;
-  const speed = Math.max(Math.round(38 + progress * 18 + wave * 1.2 + runPulse + (winner ? lateSprint * 18 : 0)), 14);
-  return { position, speed, bob: Math.sin(now * 0.012 + cat) * 4 };
+  const speed = raceResolved && !winner
+    ? 0
+    : Math.max(Math.round(38 + progress * 18 + wave * 1.2 + runPulse + (winner ? lateSprint * 24 + finishExit * 26 : 0)), 14);
+  const fadeOut = winner ? Math.min(Math.max((finishExit - 0.36) / 0.64, 0), 1) : 0;
+  return {
+    position,
+    speed,
+    bob: raceResolved && !winner ? 8 : Math.sin(now * 0.012 + cat) * 4,
+    opacity: winner ? 1 - fadeOut : 1,
+    scale: winner && raceResolved ? 1.08 - fadeOut * 0.2 : 1,
+  };
 }
 
 function moveLabel(game: GameId, move: number) {

@@ -65,7 +65,6 @@ contract SimplePlayground {
     uint256 public leaderboardEpochDuration = 5 days;
     uint256 public catRacePrepareDuration = 30 seconds;
     uint256 public catRaceRunDuration = 30 seconds;
-    uint256 public catRaceFinishDuration = 5 seconds;
     uint256 public constant MIN_LEADERBOARD_GAMES = 100;
 
     bytes32 public immutable DOMAIN_SEPARATOR;
@@ -616,7 +615,7 @@ contract SimplePlayground {
     }
 
     function _catRaceCycleDuration() private view returns (uint256) {
-        return catRacePrepareDuration + catRaceRunDuration + catRaceFinishDuration;
+        return catRacePrepareDuration + catRaceRunDuration;
     }
 
     function _catRaceWinner(uint256 raceId) private view returns (uint8) {
