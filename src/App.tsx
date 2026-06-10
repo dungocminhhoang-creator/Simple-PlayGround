@@ -6,7 +6,7 @@ import { BetSelector } from "./components/BetSelector";
 import { WalletBar } from "./components/WalletBar";
 import { DEMO_MODE, GAME_CONTRACT_ADDRESS, RELAYER_URL, SIMPLE_CHAIN_ID, SIMPLE_RPC_URL, shortAddress } from "./lib/simpleChain";
 import { PLAYGROUND_ABI, getPlaygroundContract } from "./lib/contract";
-import { WalletState, connectWallet, getAuthorizedWallet } from "./lib/wallet";
+import { WalletState, connectWallet, getAuthorizedWallet, getInjectedProvider } from "./lib/wallet";
 
 type Page = "lobby" | "leaderboard" | "rps" | "coin" | "cat" | "admin";
 type GameId = "coin" | "rps";
@@ -236,6 +236,7 @@ export function App() {
 
   useEffect(() => {
     let cancelled = false;
+    const injectedProvider = getInjectedProvider();
 
     async function restoreWallet() {
       try {
@@ -257,6 +258,9 @@ export function App() {
     }
 
     function handleAccountsChanged(accounts: unknown) {
+      if (localStorage.getItem(WALLET_LOGOUT_STORAGE_KEY) === "1") {
+        return;
+      }
       const [nextAddress] = Array.isArray(accounts) ? (accounts as string[]) : [];
       if (!nextAddress) {
         setWallet(emptyWallet);
@@ -276,6 +280,9 @@ export function App() {
     }
 
     function handleChainChanged() {
+      if (localStorage.getItem(WALLET_LOGOUT_STORAGE_KEY) === "1") {
+        return;
+      }
       void getAuthorizedWallet().then((next) => {
         if (next) {
           const stored = readStoredSession(next.address);
@@ -287,13 +294,13 @@ export function App() {
     }
 
     void restoreWallet();
-    window.ethereum?.on?.("accountsChanged", handleAccountsChanged);
-    window.ethereum?.on?.("chainChanged", handleChainChanged);
+    injectedProvider?.on?.("accountsChanged", handleAccountsChanged);
+    injectedProvider?.on?.("chainChanged", handleChainChanged);
 
     return () => {
       cancelled = true;
-      window.ethereum?.removeListener?.("accountsChanged", handleAccountsChanged);
-      window.ethereum?.removeListener?.("chainChanged", handleChainChanged);
+      injectedProvider?.removeListener?.("accountsChanged", handleAccountsChanged);
+      injectedProvider?.removeListener?.("chainChanged", handleChainChanged);
     };
   }, []);
 

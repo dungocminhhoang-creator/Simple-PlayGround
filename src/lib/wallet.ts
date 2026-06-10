@@ -1,13 +1,16 @@
 import { BrowserProvider, formatEther } from "ethers";
 import { SIMPLE_CHAIN_HEX, SIMPLE_CHAIN_PARAMS } from "./simpleChain";
 
+type EvmInjectedProvider = {
+  request<T = unknown>(args: { method: string; params?: unknown[] }): Promise<T>;
+  on?(event: string, callback: (...args: unknown[]) => void): void;
+  removeListener?(event: string, callback: (...args: unknown[]) => void): void;
+};
+
 declare global {
   interface Window {
-    ethereum?: {
-      request<T = unknown>(args: { method: string; params?: unknown[] }): Promise<T>;
-      on?(event: string, callback: (...args: unknown[]) => void): void;
-      removeListener?(event: string, callback: (...args: unknown[]) => void): void;
-    };
+    ethereum?: EvmInjectedProvider & { providers?: EvmInjectedProvider[] };
+    okxwallet?: EvmInjectedProvider;
   }
 }
 
@@ -18,18 +21,40 @@ export type WalletState = {
   chainId: string;
 };
 
-export async function ensureSimpleChain() {
-  if (!window.ethereum) {
-    throw new Error("Wallet extension not found");
+export function getInjectedProvider(): EvmInjectedProvider | null {
+  if (window.okxwallet?.request) {
+    return window.okxwallet;
   }
 
-  const current = await window.ethereum.request<string>({ method: "eth_chainId" });
+  const providers = window.ethereum?.providers;
+  const firstProvider = providers?.find((provider) => provider?.request);
+  if (firstProvider) {
+    return firstProvider;
+  }
+
+  return window.ethereum?.request ? window.ethereum : null;
+}
+
+async function waitForInjectedProvider() {
+  const existing = getInjectedProvider();
+  if (existing) return existing;
+
+  await new Promise((resolve) => window.setTimeout(resolve, 500));
+  return getInjectedProvider();
+}
+
+export async function ensureSimpleChain(provider = getInjectedProvider()) {
+  if (!provider) {
+    throw new Error("Install or enable an EVM wallet such as OKX Wallet, MetaMask, or Rabby first.");
+  }
+
+  const current = await provider.request<string>({ method: "eth_chainId" });
   if (current?.toLowerCase() === SIMPLE_CHAIN_HEX.toLowerCase()) {
     return;
   }
 
   try {
-    await window.ethereum.request({
+    await provider.request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: SIMPLE_CHAIN_HEX }],
     });
@@ -39,7 +64,7 @@ export async function ensureSimpleChain() {
       throw error;
     }
 
-    await window.ethereum.request({
+    await provider.request({
       method: "wallet_addEthereumChain",
       params: [SIMPLE_CHAIN_PARAMS],
     });
@@ -47,33 +72,35 @@ export async function ensureSimpleChain() {
 }
 
 export async function connectWallet(): Promise<WalletState> {
-  if (!window.ethereum) {
-    throw new Error("Install MetaMask, Rabby, or another EVM wallet first.");
+  const injectedProvider = await waitForInjectedProvider();
+  if (!injectedProvider) {
+    throw new Error("Install or enable an EVM wallet such as OKX Wallet, MetaMask, or Rabby first.");
   }
 
-  await ensureSimpleChain();
-  const provider = new BrowserProvider(window.ethereum);
-  const [address] = await window.ethereum.request<string[]>({ method: "eth_requestAccounts" });
-  const chainId = await window.ethereum.request<string>({ method: "eth_chainId" });
+  await ensureSimpleChain(injectedProvider);
+  const provider = new BrowserProvider(injectedProvider);
+  const [address] = await injectedProvider.request<string[]>({ method: "eth_requestAccounts" });
+  const chainId = await injectedProvider.request<string>({ method: "eth_chainId" });
   const balance = formatEther(await provider.getBalance(address));
 
   return { provider, address, balance, chainId };
 }
 
 export async function getAuthorizedWallet(): Promise<WalletState | null> {
-  if (!window.ethereum) {
+  const injectedProvider = await waitForInjectedProvider();
+  if (!injectedProvider) {
     return null;
   }
 
-  const accounts = await window.ethereum.request<string[]>({ method: "eth_accounts" });
+  const accounts = await injectedProvider.request<string[]>({ method: "eth_accounts" });
   const [address] = accounts;
   if (!address) {
     return null;
   }
 
-  await ensureSimpleChain();
-  const provider = new BrowserProvider(window.ethereum);
-  const chainId = await window.ethereum.request<string>({ method: "eth_chainId" });
+  await ensureSimpleChain(injectedProvider);
+  const provider = new BrowserProvider(injectedProvider);
+  const chainId = await injectedProvider.request<string>({ method: "eth_chainId" });
   const balance = formatEther(await provider.getBalance(address));
 
   return { provider, address, balance, chainId };
