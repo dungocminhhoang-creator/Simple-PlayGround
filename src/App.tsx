@@ -221,7 +221,7 @@ export function App() {
 
   useEffect(() => {
     if (DEMO_MODE) return;
-    if (catRace.phase === "race" && catRace.winnerCat >= 5) {
+    if ((catRace.phase === "race" || catRace.phase === "settled") && catRace.winnerCat >= 5) {
       void startCatRaceViaRelayer(catRace.raceId);
     }
   }, [catRace.phase, catRace.raceId, catRace.winnerCat]);
@@ -969,6 +969,10 @@ export function App() {
             now={now}
             onBet={placeCatRaceBet}
             onClaim={settleCatRaceBet}
+            onDeposit={depositPlayer}
+            onWithdraw={withdrawPlayer}
+            relayerHealth={relayerHealth}
+            sessionReady={sessionReady}
             settings={settings}
           />
         )}
@@ -1519,6 +1523,10 @@ function CatRacePage({
   now,
   onBet,
   onClaim,
+  onDeposit,
+  onWithdraw,
+  relayerHealth,
+  sessionReady,
   settings,
 }: {
   account: AccountState;
@@ -1528,10 +1536,16 @@ function CatRacePage({
   now: number;
   onBet: (cat: number, bet: string) => void;
   onClaim: (raceId: number) => void;
+  onDeposit: (amount: string) => void;
+  onWithdraw: (amount: string) => void;
+  relayerHealth: RelayerHealth;
+  sessionReady: boolean;
   settings: SettingsState;
 }) {
   const [selectedCat, setSelectedCat] = useState(0);
   const [bet, setBet] = useState("0.1");
+  const [depositAmount, setDepositAmount] = useState("5");
+  const [withdrawAmount, setWithdrawAmount] = useState("1");
   const betAmount = Number(bet || "0");
   const totalCost = betAmount + (betAmount * settings.entryFeeBps) / 10000;
   const worstCasePayout = betAmount * 5 - (betAmount * 5 * settings.winFeeBps) / 10000;
@@ -1593,6 +1607,18 @@ function CatRacePage({
 
       <aside className="wager-panel">
         <BetSelector bet={bet} setBet={setBet} />
+        <AccountPanel
+          account={account}
+          busy={busy}
+          depositAmount={depositAmount}
+          onDeposit={onDeposit}
+          onWithdraw={onWithdraw}
+          relayerHealth={relayerHealth}
+          sessionReady={sessionReady}
+          setDepositAmount={setDepositAmount}
+          setWithdrawAmount={setWithdrawAmount}
+          withdrawAmount={withdrawAmount}
+        />
         <div className="receipt">
           <ReceiptText size={18} />
           <dl>
@@ -2035,26 +2061,36 @@ function buildCatRaceLeaderboardRows(players: readonly string[], wonTotals: read
 }
 
 function catRaceDisplayPhase(catRace: CatRaceState, now: number): CatRaceDisplayPhase {
-  if (catRace.phase === "settled") return "finish";
-  if (catRace.phase === "prepare" && catRace.previousRaceId > 0 && now - catRace.startedAt < CAT_RACE_FINISH_SECONDS) {
+  if (!catRace.startedAt || !catRace.bettingEndsAt || !catRace.endsAt) {
+    return "prepare";
+  }
+
+  if (now >= catRace.endsAt && now < catRace.endsAt + CAT_RACE_FINISH_SECONDS) {
     return "finish";
   }
-  return catRace.phase === "race" ? "race" : "prepare";
+
+  if (catRace.phase === "prepare" && catRace.previousRaceId > 0 && now >= catRace.startedAt && now < catRace.startedAt + CAT_RACE_FINISH_SECONDS) {
+    return "finish";
+  }
+
+  if (now >= catRace.bettingEndsAt && now < catRace.endsAt) {
+    return "race";
+  }
+
+  return "prepare";
 }
 
 function catRacePhaseRemaining(catRace: CatRaceState, now: number, displayPhase: CatRaceDisplayPhase) {
   if (displayPhase === "finish") {
-    if (catRace.phase === "prepare") {
-      return Math.max((catRace.startedAt || now) + CAT_RACE_FINISH_SECONDS - now, 0);
-    }
-    return Math.max((catRace.endsAt || now) + CAT_RACE_FINISH_SECONDS - now, 0);
+    const phaseStart = now >= catRace.endsAt ? catRace.endsAt : catRace.startedAt;
+    return Math.max((phaseStart || now) + CAT_RACE_FINISH_SECONDS - now, 0);
   }
   if (displayPhase === "prepare") {
-    const phaseEnd = Math.min(catRace.bettingEndsAt || now, (catRace.startedAt || now) + CAT_RACE_PREPARE_SECONDS);
+    const phaseEnd = catRace.bettingEndsAt || (catRace.startedAt || now) + CAT_RACE_PREPARE_SECONDS;
     return Math.max(phaseEnd - now, 0);
   }
   if (displayPhase === "race") {
-    const phaseEnd = Math.min(catRace.endsAt || now, (catRace.bettingEndsAt || now) + CAT_RACE_RUN_SECONDS);
+    const phaseEnd = catRace.endsAt || (catRace.bettingEndsAt || now) + CAT_RACE_RUN_SECONDS;
     return Math.max(phaseEnd - now, 0);
   }
   return 0;
@@ -2062,8 +2098,7 @@ function catRacePhaseRemaining(catRace: CatRaceState, now: number, displayPhase:
 
 function catRaceRaceProgress(catRace: CatRaceState, now: number, displayPhase: CatRaceDisplayPhase) {
   if (displayPhase === "finish") return 1;
-  if (catRace.phase === "settled") return 1;
-  if (catRace.phase !== "race") return 0;
+  if (displayPhase !== "race") return 0;
   const raceStartedAt = catRace.bettingEndsAt || now;
   return Math.min(Math.max((now - raceStartedAt) / CAT_RACE_RUN_SECONDS, 0), 1);
 }
