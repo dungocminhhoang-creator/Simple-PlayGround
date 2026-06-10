@@ -43,6 +43,16 @@ contract SimplePlayground {
         bytes32 nextServerSeedHash;
     }
 
+    struct CatRaceRoundView {
+        uint256 raceId;
+        uint8 phase;
+        uint256 startedAt;
+        uint256 bettingEndsAt;
+        uint256 endsAt;
+        uint8 winnerCat;
+        uint256[5] totalBets;
+    }
+
     address public owner;
     uint16 public entryFeeBps = 500;
     uint16 public winFeeBps = 500;
@@ -51,7 +61,10 @@ contract SimplePlayground {
     uint256 public nextRoundId = 1;
     uint256 public totalPlayerBalances;
     uint256 public immutable leaderboardGenesis;
+    uint256 public immutable catRaceGenesis;
     uint256 public leaderboardEpochDuration = 5 days;
+    uint256 public catRacePrepareDuration = 30 seconds;
+    uint256 public catRaceRunDuration = 90 seconds;
     uint256 public constant MIN_LEADERBOARD_GAMES = 100;
 
     bytes32 public immutable DOMAIN_SEPARATOR;
@@ -69,6 +82,11 @@ contract SimplePlayground {
     mapping(uint256 => address[10]) private epochTopPlayers;
     mapping(uint256 => bool) public epochRewardsSettled;
     uint256[10] private leaderboardRewardAmounts;
+    mapping(uint256 => mapping(uint8 => uint256)) public catRaceTotalBets;
+    mapping(uint256 => mapping(address => mapping(uint8 => uint256))) public catRacePlayerBets;
+    mapping(uint256 => mapping(address => bool)) public catRaceClaimed;
+    mapping(address => uint256) public catRaceWonTotals;
+    address[10] private catRaceTopPlayers;
 
     event OwnerChanged(address indexed previousOwner, address indexed nextOwner);
     event TrustedRelayerUpdated(address indexed relayer, bool trusted);
@@ -96,6 +114,8 @@ contract SimplePlayground {
     event LeaderboardRewardsSettled(uint256 indexed epoch, uint256 totalRewards);
     event LeaderboardRewardUpdated(uint8 indexed rank, uint256 amount);
     event LeaderboardCycleUpdated(uint256 duration);
+    event CatRaceBetPlaced(uint256 indexed raceId, address indexed player, uint8 indexed cat, uint256 amount);
+    event CatRaceSettled(uint256 indexed raceId, address indexed player, uint8 indexed winnerCat, uint256 payout);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "not owner");
@@ -110,6 +130,7 @@ contract SimplePlayground {
     constructor() {
         owner = msg.sender;
         leaderboardGenesis = block.timestamp;
+        catRaceGenesis = block.timestamp;
         leaderboardRewardAmounts[0] = 3 ether;
         leaderboardRewardAmounts[1] = 2 ether;
         leaderboardRewardAmounts[2] = 2 ether;
@@ -169,6 +190,50 @@ contract SimplePlayground {
     function leaderboardRewardsInfo() external view returns (uint256[10] memory rewards) {
         for (uint256 i = 0; i < 10; i++) {
             rewards[i] = leaderboardRewardAmounts[i];
+        }
+    }
+
+    function currentCatRaceId() public view returns (uint256) {
+        return ((block.timestamp - catRaceGenesis) / _catRaceCycleDuration()) + 1;
+    }
+
+    function catRaceRoundBounds(uint256 raceId)
+        public
+        view
+        returns (uint256 startedAt, uint256 bettingEndsAt, uint256 endsAt)
+    {
+        require(raceId > 0, "zero race");
+        startedAt = catRaceGenesis + ((raceId - 1) * _catRaceCycleDuration());
+        bettingEndsAt = startedAt + catRacePrepareDuration;
+        endsAt = bettingEndsAt + catRaceRunDuration;
+    }
+
+    function catRaceCurrentInfo() external view returns (CatRaceRoundView memory info) {
+        return catRaceRoundInfo(currentCatRaceId());
+    }
+
+    function catRaceRoundInfo(uint256 raceId) public view returns (CatRaceRoundView memory info) {
+        (uint256 startedAt, uint256 bettingEndsAt, uint256 endsAt) = catRaceRoundBounds(raceId);
+        uint8 phase = block.timestamp < bettingEndsAt ? 0 : block.timestamp < endsAt ? 1 : 2;
+        uint256[5] memory totals;
+        for (uint8 i = 0; i < 5; i++) {
+            totals[i] = catRaceTotalBets[raceId][i];
+        }
+        info = CatRaceRoundView({
+            raceId: raceId,
+            phase: phase,
+            startedAt: startedAt,
+            bettingEndsAt: bettingEndsAt,
+            endsAt: endsAt,
+            winnerCat: _catRaceWinner(raceId),
+            totalBets: totals
+        });
+    }
+
+    function catRaceLeaderboardInfo() external view returns (address[10] memory players, uint256[10] memory wonTotals) {
+        players = catRaceTopPlayers;
+        for (uint256 i = 0; i < 10; i++) {
+            wonTotals[i] = players[i] == address(0) ? uint256(0) : catRaceWonTotals[players[i]];
         }
     }
 
@@ -236,6 +301,40 @@ contract SimplePlayground {
         require(cycleDays > 0 && cycleDays <= 365, "invalid cycle");
         leaderboardEpochDuration = uint256(cycleDays) * 1 days;
         emit LeaderboardCycleUpdated(leaderboardEpochDuration);
+    }
+
+    function placeCatRaceBet(uint8 cat, uint256 betAmount) external returns (uint256 raceId) {
+        require(cat < 5, "invalid cat");
+        raceId = currentCatRaceId();
+        (, uint256 bettingEndsAt, ) = catRaceRoundBounds(raceId);
+        require(block.timestamp < bettingEndsAt, "betting closed");
+
+        _chargePlayer(msg.sender, betAmount);
+        catRacePlayerBets[raceId][msg.sender][cat] += betAmount;
+        catRaceTotalBets[raceId][cat] += betAmount;
+
+        emit CatRaceBetPlaced(raceId, msg.sender, cat, betAmount);
+    }
+
+    function settleCatRaceBet(uint256 raceId) external returns (uint256 payout) {
+        require(raceId > 0 && raceId < currentCatRaceId(), "race active");
+        require(!catRaceClaimed[raceId][msg.sender], "already claimed");
+        catRaceClaimed[raceId][msg.sender] = true;
+
+        uint8 winnerCat = _catRaceWinner(raceId);
+        uint256 winningBet = catRacePlayerBets[raceId][msg.sender][winnerCat];
+        if (winningBet > 0) {
+            uint256 grossPayout = winningBet * 5;
+            uint256 winFee = (grossPayout * winFeeBps) / 10_000;
+            payout = grossPayout - winFee;
+            require(poolLiquidity() >= payout, "pool too low");
+            playerBalances[msg.sender] += payout;
+            totalPlayerBalances += payout;
+            catRaceWonTotals[msg.sender] += payout;
+            _sortCatRaceLeaderboard(msg.sender);
+        }
+
+        emit CatRaceSettled(raceId, msg.sender, winnerCat, payout);
     }
 
     function transferOwnership(address nextOwner) external onlyOwner {
@@ -507,6 +606,55 @@ contract SimplePlayground {
 
     function _leaderboardReward(uint8 index) private view returns (uint256) {
         return leaderboardRewardAmounts[index];
+    }
+
+    function _catRaceCycleDuration() private view returns (uint256) {
+        return catRacePrepareDuration + catRaceRunDuration;
+    }
+
+    function _catRaceWinner(uint256 raceId) private view returns (uint8) {
+        (, uint256 bettingEndsAt, ) = catRaceRoundBounds(raceId);
+        return uint8(uint256(keccak256(abi.encodePacked(raceId, bettingEndsAt, address(this), block.chainid))) % 5);
+    }
+
+    function _sortCatRaceLeaderboard(address player) private {
+        address[10] storage players = catRaceTopPlayers;
+        uint256 index = 10;
+        for (uint256 i = 0; i < 10; i++) {
+            if (players[i] == player) {
+                index = i;
+                break;
+            }
+        }
+
+        if (index == 10) {
+            address lastPlayer = players[9];
+            if (lastPlayer == address(0) || catRaceWonTotals[player] > catRaceWonTotals[lastPlayer]) {
+                players[9] = player;
+            } else {
+                return;
+            }
+        }
+
+        for (uint256 i = 0; i < 10; i++) {
+            for (uint256 j = i + 1; j < 10; j++) {
+                if (_catRaceComesBefore(players[j], players[i])) {
+                    address temp = players[i];
+                    players[i] = players[j];
+                    players[j] = temp;
+                }
+            }
+        }
+    }
+
+    function _catRaceComesBefore(address candidate, address current) private view returns (bool) {
+        if (candidate == address(0)) {
+            return false;
+        }
+        if (current == address(0)) {
+            return true;
+        }
+        return catRaceWonTotals[candidate] > catRaceWonTotals[current];
     }
 
     function _calculatePayout(uint256 betAmount, Result result) private view returns (uint256 payout, uint256 entryFee, uint256 winFee) {

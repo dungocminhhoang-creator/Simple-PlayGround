@@ -280,6 +280,17 @@ button:disabled {
   height: 42px;
 }
 
+.icon-button--danger {
+  border-color: rgba(255, 93, 115, 0.36);
+  color: var(--error);
+  background: rgba(255, 93, 115, 0.08);
+}
+
+.icon-button--danger:hover {
+  border-color: rgba(255, 93, 115, 0.62);
+  background: rgba(255, 93, 115, 0.14);
+}
+
 .config-strip {
   grid-column: 1 / -1;
   justify-content: space-between;
@@ -288,7 +299,6 @@ button:disabled {
   font-size: 13px;
 }
 
-.relayer-chip,
 .relayer-badge,
 .play-mode {
   display: inline-flex;
@@ -296,7 +306,6 @@ button:disabled {
   gap: 8px;
 }
 
-.relayer-chip i,
 .relayer-badge i,
 .status-dot {
   width: 9px;
@@ -305,32 +314,20 @@ button:disabled {
   flex: 0 0 auto;
 }
 
-.relayer-chip {
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid rgba(125, 229, 236, 0.18);
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.24);
-}
-
-.relayer-chip--online,
 .relayer-badge--online {
   color: var(--green);
 }
 
-.relayer-chip--offline,
 .relayer-badge--offline {
   color: var(--error);
 }
 
-.relayer-chip--online i,
 .relayer-badge--online i,
 .status-dot--online {
   background: var(--green);
   box-shadow: 0 0 14px rgba(57, 242, 154, 0.82);
 }
 
-.relayer-chip--offline i,
 .relayer-badge--offline i,
 .status-dot--offline {
   background: var(--error);
@@ -432,7 +429,8 @@ button:disabled {
 .lobby-layout,
 .game-layout,
 .admin-layout,
-.leaderboard-layout {
+.leaderboard-layout,
+.cat-race-layout {
   display: grid;
   gap: 18px;
 }
@@ -442,7 +440,7 @@ button:disabled {
   grid-template-columns: minmax(0, 0.82fr) minmax(340px, 1fr);
   align-items: center;
   gap: 28px;
-  min-height: 370px;
+  min-height: 330px;
   padding: 28px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -452,7 +450,7 @@ button:disabled {
 
 .hero-copy {
   display: grid;
-  gap: 18px;
+  gap: 24px;
   align-content: center;
 }
 
@@ -462,14 +460,6 @@ button:disabled {
   font-size: 58px;
   line-height: 0.98;
   letter-spacing: 0;
-}
-
-.hero-copy p {
-  max-width: 600px;
-  margin: 0;
-  color: #c6dfe4;
-  font-size: 17px;
-  line-height: 1.7;
 }
 
 .hero-band img {
@@ -485,19 +475,31 @@ button:disabled {
 
 .metric-row {
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
 }
 
 .metric-row span {
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  display: grid;
+  gap: 3px;
+  min-width: 132px;
+  padding: 13px 16px;
+  border: 1px solid rgba(52, 228, 244, 0.28);
+  border-radius: var(--radius);
   color: var(--muted);
-  background: rgba(0, 0, 0, 0.26);
+  background:
+    linear-gradient(180deg, rgba(52, 228, 244, 0.1), rgba(0, 0, 0, 0.22)),
+    rgba(0, 0, 0, 0.28);
+  font-size: 13px;
+  font-weight: 720;
+  text-transform: uppercase;
 }
 
 .metric-row b {
   color: var(--text);
+  font-size: 30px;
+  line-height: 1;
+  text-transform: none;
+  text-shadow: 0 0 22px rgba(52, 228, 244, 0.34);
 }
 
 .game-grid {
@@ -548,14 +550,16 @@ button:disabled {
 
 .game-layout,
 .admin-layout,
-.leaderboard-layout {
+.leaderboard-layout,
+.cat-race-layout {
   grid-template-columns: minmax(0, 1fr) 360px;
 }
 
 .play-surface,
 .wager-panel,
 .admin-main,
-.leaderboard-main {
+.leaderboard-main,
+.cat-race-main {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
@@ -563,7 +567,8 @@ button:disabled {
 
 .play-surface,
 .admin-main,
-.leaderboard-main {
+.leaderboard-main,
+.cat-race-main {
   display: grid;
   gap: 20px;
   padding: 24px;
@@ -943,6 +948,306 @@ button:disabled {
 
 .history-result--lose {
   color: var(--error);
+}
+
+.race-phase,
+.race-clock,
+.cat-card,
+.cat-result-box,
+.cat-leaderboard {
+  border: 1px solid rgba(125, 229, 236, 0.16);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.race-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 0 12px;
+  color: var(--cyan);
+  font-weight: 800;
+}
+
+.race-phase--prepare {
+  color: var(--warn);
+}
+
+.race-phase--race {
+  color: var(--green);
+}
+
+.race-clock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 64px;
+  padding: 12px 16px;
+}
+
+.race-clock strong {
+  color: #fff;
+  font-size: 34px;
+  line-height: 1;
+  text-shadow: 0 0 24px rgba(52, 228, 244, 0.45);
+}
+
+.race-clock span {
+  color: var(--muted);
+}
+
+.cat-race-arena {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  min-height: 430px;
+  padding: 18px;
+  border: 1px solid rgba(52, 228, 244, 0.22);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 80% 0, rgba(57, 242, 154, 0.1), transparent 18rem),
+    linear-gradient(180deg, rgba(4, 19, 22, 0.92), rgba(0, 0, 0, 0.76));
+}
+
+.cat-race-arena::before {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background-image:
+    linear-gradient(90deg, rgba(52, 228, 244, 0.08) 1px, transparent 1px),
+    radial-gradient(circle, rgba(52, 228, 244, 0.22) 1px, transparent 1.8px);
+  background-size: 70px 100%, 22px 22px;
+  opacity: 0.6;
+}
+
+.race-event-strip {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(52, 228, 244, 0.18);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.36);
+}
+
+.race-event-strip strong {
+  color: var(--cyan);
+}
+
+.race-event-strip span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.cat-lane {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.lane-label {
+  color: #c6dfe4;
+  font-weight: 800;
+}
+
+.lane-track {
+  position: relative;
+  height: 58px;
+  border: 1px solid rgba(125, 229, 236, 0.13);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(90deg, rgba(52, 228, 244, 0.12), transparent 22%),
+    rgba(0, 0, 0, 0.28);
+}
+
+.start-line,
+.finish-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: rgba(244, 251, 255, 0.8);
+}
+
+.start-line {
+  left: 9px;
+}
+
+.finish-line {
+  right: 9px;
+  background: repeating-linear-gradient(180deg, #fff 0 7px, #03080a 7px 14px);
+}
+
+.cat-runner {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  transform: translate(calc(var(--cat-x) * 0.84), calc(-50% + var(--cat-bob)));
+  transition: transform 0.65s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+.cat-runner--racing .cat-sprite {
+  animation: catStride 0.28s ease-in-out infinite alternate;
+}
+
+.cat-runner--winner .cat-sprite {
+  filter: drop-shadow(0 0 16px rgba(57, 242, 154, 0.9));
+}
+
+.cat-sprite {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(52, 228, 244, 0.36);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.38);
+  font-size: 27px;
+}
+
+.cat-speed {
+  position: absolute;
+  left: 34px;
+  top: -18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 74px;
+  padding: 4px 7px;
+  border: 1px solid rgba(52, 228, 244, 0.3);
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(2, 8, 10, 0.9);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.cat-event {
+  position: absolute;
+  right: -46px;
+  bottom: -16px;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 209, 102, 0.4);
+  border-radius: 999px;
+  color: var(--warn);
+  background: rgba(0, 0, 0, 0.78);
+  font-size: 11px;
+}
+
+.race-winner-banner {
+  position: absolute;
+  right: 22px;
+  bottom: 20px;
+  z-index: 3;
+  display: grid;
+  gap: 4px;
+  min-width: 240px;
+  padding: 15px;
+  border: 1px solid rgba(57, 242, 154, 0.55);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 0 0, rgba(57, 242, 154, 0.2), transparent 10rem),
+    rgba(0, 0, 0, 0.82);
+  box-shadow: 0 0 42px rgba(57, 242, 154, 0.18);
+}
+
+.race-winner-banner strong {
+  color: var(--green);
+  font-size: 24px;
+}
+
+.race-winner-banner span {
+  color: #c6dfe4;
+}
+
+.cat-bet-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cat-card {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  min-height: 132px;
+  padding: 12px;
+  color: var(--text);
+}
+
+.cat-card--active,
+.cat-card:hover {
+  border-color: rgba(52, 228, 244, 0.7);
+  background: linear-gradient(180deg, rgba(52, 228, 244, 0.16), rgba(0, 0, 0, 0.28));
+}
+
+.cat-avatar {
+  font-size: 34px;
+}
+
+.cat-card small,
+.cat-card em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  text-align: center;
+}
+
+.cat-result-box {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+}
+
+.cat-result-box span,
+.cat-result-box small {
+  color: var(--muted);
+}
+
+.cat-result-box strong {
+  color: var(--green);
+  font-size: 24px;
+}
+
+.cat-leaderboard {
+  display: grid;
+  gap: 9px;
+  padding: 14px;
+}
+
+.cat-leaderboard div {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(125, 229, 236, 0.12);
+}
+
+.cat-leaderboard b {
+  color: var(--cyan);
+}
+
+.cat-leaderboard span,
+.cat-leaderboard small {
+  color: var(--muted);
+}
+
+.cat-leaderboard strong {
+  color: var(--green);
 }
 
 .wager-panel {
@@ -1635,6 +1940,15 @@ button:disabled {
   }
 }
 
+@keyframes catStride {
+  from {
+    transform: rotate(-7deg) translateY(0);
+  }
+  to {
+    transform: rotate(7deg) translateY(-3px);
+  }
+}
+
 @media (max-width: 1120px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1647,7 +1961,7 @@ button:disabled {
   }
 
   .nav-list {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .pool-panel {
@@ -1657,7 +1971,8 @@ button:disabled {
   .hero-band,
   .game-layout,
   .admin-layout,
-  .leaderboard-layout {
+  .leaderboard-layout,
+  .cat-race-layout {
     grid-template-columns: 1fr;
   }
 }
@@ -1734,5 +2049,24 @@ button:disabled {
 
   .rps-duel {
     grid-template-columns: 1fr;
+  }
+
+  .cat-bet-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cat-lane {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .cat-race-arena {
+    min-height: 520px;
+    padding: 12px;
+  }
+
+  .race-event-strip,
+  .race-clock {
+    display: grid;
   }
 }

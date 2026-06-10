@@ -1,14 +1,14 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Coins, Crown, Dice5, Gem, Hand, History, Landmark, Loader2, ReceiptText, Scissors, ShieldCheck, Trophy, WalletCards, X, Zap } from "lucide-react";
-import { BrowserProvider, Contract, formatEther, hexlify, parseEther, randomBytes } from "ethers";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
+import { ArrowRight, Cat, CheckCircle2, ChevronDown, ChevronRight, Coins, Crown, Dice5, Flag, Gauge, Gem, Hand, History, Landmark, Loader2, ReceiptText, Scissors, ShieldCheck, Trophy, WalletCards, X, Zap } from "lucide-react";
+import { AbstractProvider, BrowserProvider, Contract, JsonRpcProvider, formatEther, hexlify, parseEther, randomBytes } from "ethers";
 import { Brand } from "./components/Brand";
 import { BetSelector } from "./components/BetSelector";
 import { WalletBar } from "./components/WalletBar";
-import { GAME_CONTRACT_ADDRESS, RELAYER_URL, SIMPLE_CHAIN_ID, shortAddress } from "./lib/simpleChain";
+import { GAME_CONTRACT_ADDRESS, RELAYER_URL, SIMPLE_CHAIN_ID, SIMPLE_RPC_URL, shortAddress } from "./lib/simpleChain";
 import { PLAYGROUND_ABI, getPlaygroundContract } from "./lib/contract";
 import { WalletState, connectWallet, getAuthorizedWallet } from "./lib/wallet";
 
-type Page = "lobby" | "leaderboard" | "rps" | "coin" | "admin";
+type Page = "lobby" | "leaderboard" | "rps" | "coin" | "cat" | "admin";
 type GameId = "coin" | "rps";
 type TxStatus = { tone: "info" | "ok" | "warn" | "error"; message: string };
 type SuccessPopupState = { title: string; amount: string; detail: string } | null;
@@ -75,16 +75,61 @@ type LeaderboardState = {
   previousSettled: boolean;
   previousRows: LeaderboardRow[];
 };
+type CatRacePhase = "prepare" | "race" | "settled";
+type CatRaceLeaderboardRow = {
+  rank: number;
+  address: string;
+  won: string;
+};
+type CatRaceHistoryEntry = {
+  raceId: string;
+  winnerCat: number;
+  picks: string;
+  payout: string;
+  playedAt: number;
+};
+type CatRaceState = {
+  raceId: number;
+  phase: CatRacePhase;
+  startedAt: number;
+  bettingEndsAt: number;
+  endsAt: number;
+  winnerCat: number;
+  totalBets: string[];
+  playerBets: string[];
+  previousRaceId: number;
+  previousWinnerCat: number;
+  previousPlayerBets: string[];
+  previousClaimed: boolean;
+  leaderboard: CatRaceLeaderboardRow[];
+};
 
 const SESSION_STORAGE_PREFIX = "simple-playground-relayer-session";
 const HISTORY_STORAGE_PREFIX = "simple-playground-history";
+const CAT_HISTORY_STORAGE_PREFIX = "simple-playground-cat-race-history";
 const AUTO_SESSION_ALLOWANCE = "1000000";
 const AUTO_SESSION_DURATION_SECONDS = 30 * 24 * 60 * 60;
 const emptyWallet: WalletState = { provider: null, address: "", balance: "0", chainId: "" };
 const emptyAccount: AccountState = { gameBalance: "0", sessionSpent: "0" };
 const emptyHealth: RelayerHealth = { ok: false, contractAddress: "", relayerAddress: "", trusted: false, currentSeedHash: "", seedCommitted: false };
 const defaultLeaderboardRewards = ["3", "2", "2", "1", "1", "1", "1", "1", "1", "1"];
+const publicProvider = new JsonRpcProvider(SIMPLE_RPC_URL, SIMPLE_CHAIN_ID);
 const emptyLeaderboard: LeaderboardState = { epoch: 0, startedAt: 0, endsAt: 0, settled: false, rows: [], rewards: defaultLeaderboardRewards, cycleDays: 5, previousEpoch: 0, previousSettled: true, previousRows: [] };
+const emptyCatRace: CatRaceState = {
+  raceId: 0,
+  phase: "prepare",
+  startedAt: 0,
+  bettingEndsAt: 0,
+  endsAt: 0,
+  winnerCat: 0,
+  totalBets: ["0", "0", "0", "0", "0"],
+  playerBets: ["0", "0", "0", "0", "0"],
+  previousRaceId: 0,
+  previousWinnerCat: 0,
+  previousPlayerBets: ["0", "0", "0", "0", "0"],
+  previousClaimed: true,
+  leaderboard: [],
+};
 
 const initialSettings: SettingsState = {
   entryFeeBps: 500,
@@ -110,6 +155,12 @@ const games = [
     subtitle: "Guess whether the Simple Chain logo lands up or down.",
     icon: Coins,
   },
+  {
+    page: "cat" as const,
+    title: "Cat Race",
+    subtitle: "Pick one of five racers before the gate closes.",
+    icon: Cat,
+  },
 ];
 
 export function App() {
@@ -123,6 +174,8 @@ export function App() {
   const [roundResult, setRoundResult] = useState<RoundResult | null>(null);
   const [roundHistory, setRoundHistory] = useState<Record<GameId, RoundHistoryEntry[]>>({ coin: [], rps: [] });
   const [leaderboard, setLeaderboard] = useState<LeaderboardState>(emptyLeaderboard);
+  const [catRace, setCatRace] = useState<CatRaceState>(emptyCatRace);
+  const [catRaceHistory, setCatRaceHistory] = useState<CatRaceHistoryEntry[]>([]);
   const [now, setNow] = useState(Math.floor(Date.now() / 1000));
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -139,18 +192,26 @@ export function App() {
 
   useEffect(() => {
     void loadRelayerHealth();
+    void loadPublicChainState();
     const interval = window.setInterval(() => void loadRelayerHealth(), 10000);
     return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
     setRoundHistory(readStoredHistory(wallet.address));
+    setCatRaceHistory(readStoredCatRaceHistory(wallet.address));
   }, [wallet.address]);
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    void loadCatRace(publicProvider, wallet.address);
+    const interval = window.setInterval(() => void loadCatRace(publicProvider, wallet.address), 5000);
+    return () => window.clearInterval(interval);
+  }, [wallet.address]);
 
   useEffect(() => {
     let cancelled = false;
@@ -213,9 +274,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (wallet.provider) {
-      void refreshChainState(wallet.provider, wallet.address, relayerSession);
-    }
+    void refreshChainState(wallet.provider, wallet.address, relayerSession);
   }, [wallet.provider, wallet.address, relayerSession]);
 
   useEffect(() => {
@@ -259,23 +318,32 @@ export function App() {
     setWallet((current) => ({ ...current, provider, address, balance }));
   }
 
+  async function loadPublicChainState() {
+    await Promise.all([loadSettings(publicProvider), loadLeaderboard(publicProvider), loadCatRace(publicProvider, wallet.address)]);
+  }
+
   async function refreshChainState(provider = wallet.provider, address = wallet.address, session = relayerSession) {
-    if (!provider) return;
-    await refreshWallet(provider, address);
-    await loadSettings(provider);
-    await loadLeaderboard(provider);
-    if (address) {
+    await loadPublicChainState();
+    if (provider && address) {
+      await refreshWallet(provider, address);
       await loadAccount(provider, address, session);
     }
   }
 
-  async function loadSettings(provider?: BrowserProvider | null) {
+  function handleDisconnect() {
+    setWallet(emptyWallet);
+    setAccount(emptyAccount);
+    setRelayerSession(null);
+    setRoundResult(null);
+    setStatus({ tone: "info", message: "Wallet logged out from this browser session." });
+    void loadPublicChainState();
+  }
+
+  async function loadSettings(provider: AbstractProvider = publicProvider) {
     if (!contractReady) return;
-    const activeProvider = provider ?? wallet.provider;
-    if (!activeProvider) return;
 
     try {
-      const contract = getPlaygroundContract(activeProvider);
+      const contract = getPlaygroundContract(provider);
       const [entryFeeBps, winFeeBps, minBet, maxBet, owner, poolBalance, leaderboardEpochDuration, leaderboardRewards] = await Promise.all([
         contract.entryFeeBps(),
         contract.winFeeBps(),
@@ -302,13 +370,11 @@ export function App() {
     }
   }
 
-  async function loadLeaderboard(provider?: BrowserProvider | null) {
+  async function loadLeaderboard(provider: AbstractProvider = publicProvider) {
     if (!contractReady) return;
-    const activeProvider = provider ?? wallet.provider;
-    if (!activeProvider) return;
 
     try {
-      const contract = getPlaygroundContract(activeProvider);
+      const contract = getPlaygroundContract(provider);
       const [epochRaw, rewardAmounts] = await Promise.all([
         contract.currentLeaderboardEpoch(),
         contract.leaderboardRewardsInfo(),
@@ -342,6 +408,63 @@ export function App() {
       });
     } catch {
       setLeaderboard(emptyLeaderboard);
+    }
+  }
+
+  async function loadCatRace(provider: AbstractProvider = publicProvider, address = wallet.address) {
+    if (!contractReady) return;
+
+    try {
+      const contract = getPlaygroundContract(provider);
+      const [info, leaderboardInfo] = await Promise.all([
+        contract.catRaceCurrentInfo(),
+        contract.catRaceLeaderboardInfo(),
+      ]);
+      const raceId = Number(info.raceId);
+      const previousRaceId = Math.max(raceId - 1, 0);
+      let playerBets = ["0", "0", "0", "0", "0"];
+      let previousPlayerBets = ["0", "0", "0", "0", "0"];
+      let previousWinnerCat = 0;
+      let previousClaimed = true;
+
+      if (address) {
+        const currentBetReads = [0, 1, 2, 3, 4].map((cat) => contract.catRacePlayerBets(BigInt(raceId), address, cat));
+        const previousBetReads = previousRaceId > 0
+          ? [0, 1, 2, 3, 4].map((cat) => contract.catRacePlayerBets(BigInt(previousRaceId), address, cat))
+          : [];
+        const [currentBets, previousInfo, previousBets, claimed] = await Promise.all([
+          Promise.all(currentBetReads),
+          previousRaceId > 0 ? contract.catRaceRoundInfo(BigInt(previousRaceId)) : null,
+          Promise.all(previousBetReads),
+          previousRaceId > 0 ? contract.catRaceClaimed(BigInt(previousRaceId), address) : true,
+        ]);
+        playerBets = currentBets.map((amount) => formatEther(amount));
+        previousPlayerBets = previousBets.map((amount) => formatEther(amount));
+        previousWinnerCat = previousInfo ? Number(previousInfo.winnerCat) : 0;
+        previousClaimed = Boolean(claimed);
+      } else if (previousRaceId > 0) {
+        const previousInfo = await contract.catRaceRoundInfo(BigInt(previousRaceId));
+        previousWinnerCat = Number(previousInfo.winnerCat);
+      }
+
+      const [players, wonTotals] = leaderboardInfo;
+      setCatRace({
+        raceId,
+        phase: Number(info.phase) === 0 ? "prepare" : Number(info.phase) === 1 ? "race" : "settled",
+        startedAt: Number(info.startedAt),
+        bettingEndsAt: Number(info.bettingEndsAt),
+        endsAt: Number(info.endsAt),
+        winnerCat: Number(info.winnerCat),
+        totalBets: Array.from(info.totalBets as readonly bigint[]).map((amount) => formatEther(amount)),
+        playerBets,
+        previousRaceId,
+        previousWinnerCat,
+        previousPlayerBets,
+        previousClaimed,
+        leaderboard: buildCatRaceLeaderboardRows(players, wonTotals),
+      });
+    } catch {
+      setCatRace(emptyCatRace);
     }
   }
 
@@ -477,7 +600,7 @@ export function App() {
 
     const accountBeforePlay = account;
     const betAmount = Number(bet || "0");
-    const chargedBalance = Math.max(Number(accountBeforePlay.gameBalance) - gameRoundCost(betAmount, settings.entryFeeBps), 0);
+    const chargedBalance = subtractRoundCost(accountBeforePlay.gameBalance, bet, settings.entryFeeBps);
     let optimisticApplied = false;
     let resultSettled = false;
 
@@ -504,8 +627,8 @@ export function App() {
       setPlaying(true);
       setAccount((current) => ({
         ...current,
-        gameBalance: String(chargedBalance),
-        sessionSpent: activeSessionReady ? String(Number(current.sessionSpent) + betAmount) : current.sessionSpent,
+        gameBalance: chargedBalance,
+        sessionSpent: activeSessionReady ? addEtherStrings(current.sessionSpent, bet) : current.sessionSpent,
       }));
       optimisticApplied = true;
 
@@ -560,7 +683,7 @@ export function App() {
       setRoundResult(parsedResult);
       setAccount((current) => ({
         ...(exactAccountAfterRound ?? current),
-        gameBalance: exactAccountAfterRound?.gameBalance ?? String(chargedBalance + Number(parsedResult.actualPayout)),
+        gameBalance: exactAccountAfterRound?.gameBalance ?? addEtherStrings(chargedBalance, parsedResult.actualPayout),
       }));
       addHistoryEntry(wallet.address, parsedResult);
       setStatus({ tone: parsedResult.status === "win" ? "ok" : parsedResult.status === "draw" ? "warn" : "info", message: roundMessage(parsedResult) });
@@ -599,6 +722,65 @@ export function App() {
     }
   }
 
+  async function placeCatRaceBet(cat: number, bet: string) {
+    if (!(await ensurePlayable()) || !wallet.provider || !wallet.address) return;
+    const accountBeforeBet = account;
+    try {
+      setBusy(true);
+      setAccount((current) => ({
+        ...current,
+        gameBalance: subtractRoundCost(current.gameBalance, bet, settings.entryFeeBps),
+      }));
+      const signer = await wallet.provider.getSigner();
+      const contract = new Contract(GAME_CONTRACT_ADDRESS, PLAYGROUND_ABI, signer);
+      const tx = await contract.placeCatRaceBet(cat, parseEther(bet || "0"));
+      setStatus({ tone: "info", message: `Cat Race bet ${shortAddress(tx.hash)} submitted...` });
+      await tx.wait();
+      setStatus({ tone: "ok", message: `Bet placed on ${catName(cat)}.` });
+      await Promise.all([loadAccount(wallet.provider, wallet.address, relayerSession), loadCatRace(publicProvider, wallet.address)]);
+    } catch (error) {
+      setAccount(accountBeforeBet);
+      setStatus({ tone: "error", message: getErrorMessage(error) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function settleCatRaceBet(raceId: number) {
+    if (!(await ensurePlayable()) || !wallet.provider || !wallet.address || !raceId) return;
+    try {
+      setBusy(true);
+      const signer = await wallet.provider.getSigner();
+      const contract = new Contract(GAME_CONTRACT_ADDRESS, PLAYGROUND_ABI, signer);
+      const tx = await contract.settleCatRaceBet(BigInt(raceId));
+      setStatus({ tone: "info", message: `Cat Race claim ${shortAddress(tx.hash)} submitted...` });
+      const receipt = await tx.wait();
+      if (!receipt) throw new Error("Cat Race claim was not confirmed.");
+      const result = parseCatRaceSettlement(contract, receipt.logs);
+      addCatRaceHistoryEntry(wallet.address, {
+        raceId: String(result.raceId),
+        winnerCat: result.winnerCat,
+        picks: catRace.previousPlayerBets
+          .map((amount, index) => Number(amount) > 0 ? `${catName(index)} ${safeAmount(Number(amount))}` : "")
+          .filter(Boolean)
+          .join(", ") || "-",
+        payout: result.payout,
+        playedAt: Date.now(),
+      });
+      setSuccessPopup({
+        title: Number(result.payout) > 0 ? "Cat Race payout" : "Race settled",
+        amount: `${safeAmount(Number(result.payout))} SRW`,
+        detail: `${catName(result.winnerCat)} crossed the finish line.`,
+      });
+      setStatus({ tone: Number(result.payout) > 0 ? "ok" : "info", message: `${catName(result.winnerCat)} won race #${result.raceId}.` });
+      await Promise.all([loadAccount(wallet.provider, wallet.address, relayerSession), loadCatRace(publicProvider, wallet.address)]);
+    } catch (error) {
+      setStatus({ tone: "error", message: getErrorMessage(error) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function addHistoryEntry(address: string, result: RoundResult) {
     const entry = { ...result, playedAt: Date.now() };
     setRoundHistory((current) => {
@@ -607,6 +789,14 @@ export function App() {
         [result.game]: [entry, ...(current[result.game] ?? [])].slice(0, 20),
       };
       writeStoredHistory(address, next);
+      return next;
+    });
+  }
+
+  function addCatRaceHistoryEntry(address: string, entry: CatRaceHistoryEntry) {
+    setCatRaceHistory((current) => {
+      const next = [entry, ...current].slice(0, 20);
+      writeStoredCatRaceHistory(address, next);
       return next;
     });
   }
@@ -628,6 +818,9 @@ export function App() {
           <button className={page === "coin" ? "nav-item nav-item--active" : "nav-item"} onClick={() => setPage("coin")} type="button">
             <Coins size={18} /> Coin Flip
           </button>
+          <button className={page === "cat" ? "nav-item nav-item--active" : "nav-item"} onClick={() => setPage("cat")} type="button">
+            <Cat size={18} /> Cat Race
+          </button>
           {isAdmin && (
             <button className={page === "admin" ? "nav-item nav-item--active" : "nav-item"} onClick={() => setPage("admin")} type="button">
               <Landmark size={18} /> Pool Admin
@@ -647,7 +840,7 @@ export function App() {
       </aside>
 
       <section className="content">
-        <WalletBar wallet={wallet} isAdmin={isAdmin} relayerOnline={relayerHealth.ok} onAdmin={() => setPage("admin")} onConnect={handleConnect} onRefresh={() => void refreshChainState()} busy={busy} />
+        <WalletBar wallet={wallet} isAdmin={isAdmin} onAdmin={() => setPage("admin")} onConnect={handleConnect} onDisconnect={handleDisconnect} onRefresh={() => void refreshChainState()} busy={busy} />
         <StatusBanner status={status} busy={busy} />
 
         {page === "lobby" && <Lobby account={account} onOpen={setPage} settings={settings} />}
@@ -681,6 +874,18 @@ export function App() {
             result={roundResult?.game === "coin" ? roundResult : null}
             history={roundHistory.coin}
             sessionReady={sessionReady}
+            settings={settings}
+          />
+        )}
+        {page === "cat" && (
+          <CatRacePage
+            account={account}
+            busy={busy}
+            catRace={catRace}
+            history={catRaceHistory}
+            now={now}
+            onBet={placeCatRaceBet}
+            onClaim={settleCatRaceBet}
             settings={settings}
           />
         )}
@@ -857,9 +1062,7 @@ function Lobby({ account, onOpen, settings }: { account: AccountState; onOpen: (
     <div className="lobby-layout">
       <section className="hero-band">
         <div className="hero-copy">
-          <Brand compact />
           <h1>Simple Playground</h1>
-          <p>Deposit SRW once, then press Play. Quick play approval appears automatically when it is needed.</p>
           <div className="metric-row">
             <span><b>{Number(account.gameBalance).toFixed(2)}</b> game SRW</span>
             <span><b>{Number(settings.poolBalance).toFixed(2)}</b> pool SRW</span>
@@ -1225,6 +1428,215 @@ function CoinArena({ animationMode, busy, choice, result }: { animationMode: num
   );
 }
 
+function CatRacePage({
+  account,
+  busy,
+  catRace,
+  history,
+  now,
+  onBet,
+  onClaim,
+  settings,
+}: {
+  account: AccountState;
+  busy: boolean;
+  catRace: CatRaceState;
+  history: CatRaceHistoryEntry[];
+  now: number;
+  onBet: (cat: number, bet: string) => void;
+  onClaim: (raceId: number) => void;
+  settings: SettingsState;
+}) {
+  const [selectedCat, setSelectedCat] = useState(0);
+  const [bet, setBet] = useState("0.1");
+  const betAmount = Number(bet || "0");
+  const totalCost = betAmount + (betAmount * settings.entryFeeBps) / 10000;
+  const worstCasePayout = betAmount * 5 - (betAmount * 5 * settings.winFeeBps) / 10000;
+  const isPrepare = catRace.phase === "prepare";
+  const canBet = isPrepare
+    && betAmount > 0
+    && betAmount >= Number(settings.minBet)
+    && betAmount <= Number(settings.maxBet)
+    && Number(account.gameBalance) >= totalCost
+    && Number(settings.poolBalance) >= worstCasePayout;
+  const canClaim = catRace.previousRaceId > 0
+    && !catRace.previousClaimed
+    && catRace.previousPlayerBets.some((amount) => Number(amount) > 0);
+  const remaining = Math.max((isPrepare ? catRace.bettingEndsAt : catRace.endsAt) - now, 0);
+  const countdown = splitCountdown(remaining);
+
+  return (
+    <div className="cat-race-layout">
+      <section className="cat-race-main">
+        <div className="section-heading">
+          <div>
+            <span>Multiplayer Race</span>
+            <h2>Cat Race #{catRace.raceId || "-"}</h2>
+          </div>
+          <div className={`race-phase race-phase--${catRace.phase}`}>
+            <Flag size={17} />
+            {isPrepare ? "Prepare for race" : catRace.phase === "race" ? "Race running" : "Race complete"}
+          </div>
+        </div>
+
+        <div className="race-clock">
+          <strong>{countdown.minutes}:{countdown.seconds}</strong>
+          <span>{isPrepare ? "Betting closes soon" : "Finish line countdown"}</span>
+        </div>
+
+        <CatRaceArena catRace={catRace} now={now} />
+
+        <div className="cat-bet-grid">
+          {catRace.totalBets.map((amount, index) => (
+            <button className={selectedCat === index ? "cat-card cat-card--active" : "cat-card"} key={index} onClick={() => setSelectedCat(index)} type="button">
+              <span className="cat-avatar">{catGlyph(index)}</span>
+              <strong>{catName(index)}</strong>
+              <small>Total {safeAmount(Number(amount))} SRW</small>
+              <em>Your bet {safeAmount(Number(catRace.playerBets[index] ?? "0"))} SRW</em>
+            </button>
+          ))}
+        </div>
+
+        <CatRaceHistory history={history} />
+      </section>
+
+      <aside className="wager-panel">
+        <BetSelector bet={bet} setBet={setBet} />
+        <div className="receipt">
+          <ReceiptText size={18} />
+          <dl>
+            <div><dt>Selected cat</dt><dd>{catName(selectedCat)}</dd></div>
+            <div><dt>Bet</dt><dd>{safeAmount(betAmount)} SRW</dd></div>
+            <div><dt>Prize target</dt><dd>{safeAmount(betAmount * 5)} SRW</dd></div>
+          </dl>
+        </div>
+        {!isPrepare && <div className="play-warning">Betting is locked while the cats are racing.</div>}
+        {isPrepare && !canBet && <div className="play-warning">Check game balance, pool liquidity, and bet limits before placing a race bet.</div>}
+        <button className="primary-action" disabled={busy || !canBet} onClick={() => onBet(selectedCat, bet)} type="button">
+          {busy ? <Loader2 className="spin" size={18} /> : <Cat size={18} />}
+          Bet on {catName(selectedCat)}
+        </button>
+        <button className="secondary-action" disabled={busy || !canClaim} onClick={() => onClaim(catRace.previousRaceId)} type="button">
+          <Trophy size={18} />
+          Claim Race #{catRace.previousRaceId || "-"}
+        </button>
+        <div className="cat-result-box">
+          <span>Previous winner</span>
+          <strong>{catRace.previousRaceId ? catName(catRace.previousWinnerCat) : "-"}</strong>
+          <small>{canClaim ? "Your previous race can be settled." : "Settled results appear in history."}</small>
+        </div>
+        <CatRaceLeaderboard rows={catRace.leaderboard} />
+      </aside>
+    </div>
+  );
+}
+
+function CatRaceArena({ catRace, now }: { catRace: CatRaceState; now: number }) {
+  const raceProgress = catRace.phase === "race"
+    ? Math.min(Math.max((now - catRace.bettingEndsAt) / Math.max(catRace.endsAt - catRace.bettingEndsAt, 1), 0), 1)
+    : catRace.phase === "settled"
+      ? 1
+      : 0;
+  const eventIndex = catRace.phase === "race" ? Math.floor(raceProgress * 5) : -1;
+  const eventLabels = ["Fast start", "Stone stumble", "Falling branch", "Dog bark", "Final sprint"];
+
+  return (
+    <div className={`cat-race-arena cat-race-arena--${catRace.phase}`}>
+      <div className="race-event-strip">
+        <strong>{catRace.phase === "prepare" ? "Choose your racer" : eventLabels[Math.min(Math.max(eventIndex, 0), eventLabels.length - 1)]}</strong>
+        <span>{catRace.phase === "race" ? "Speed changes in real time" : "Gates open after betting closes"}</span>
+      </div>
+      {[0, 1, 2, 3, 4].map((cat) => {
+        const motion = catMotion(cat, raceProgress, catRace.winnerCat, catRace.phase, now);
+        return (
+          <div className="cat-lane" key={cat}>
+            <span className="lane-label">{catName(cat)}</span>
+            <div className="lane-track">
+              <span className="start-line" />
+              <span className="finish-line" />
+              <div
+                className={`cat-runner ${catRace.phase === "race" ? "cat-runner--racing" : ""} ${catRace.phase !== "prepare" && cat === catRace.winnerCat ? "cat-runner--winner" : ""}`}
+                style={{ "--cat-x": `${motion.position}%`, "--cat-bob": `${motion.bob}px` } as CSSProperties}
+              >
+                <span className="cat-speed"><Gauge size={12} /> {motion.speed} km/h</span>
+                <span className="cat-sprite">{catGlyph(cat)}</span>
+                {motion.event && <span className="cat-event">{motion.event}</span>}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      {catRace.phase !== "prepare" && raceProgress >= 0.98 && (
+        <div className="race-winner-banner">
+          <strong>{catName(catRace.winnerCat)} wins</strong>
+          <span>Race #{catRace.raceId} crossed the finish line.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CatRaceLeaderboard({ rows }: { rows: CatRaceLeaderboardRow[] }) {
+  return (
+    <div className="cat-leaderboard">
+      <span className="field-label">Cat Race Winners</span>
+      {rows.length === 0 ? (
+        <small>No winners yet.</small>
+      ) : (
+        rows.map((row) => (
+          <div key={row.address}>
+            <b>#{row.rank}</b>
+            <span>{shortAddress(row.address)}</span>
+            <strong>{safeAmount(Number(row.won))} SRW</strong>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function CatRaceHistory({ history }: { history: CatRaceHistoryEntry[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="history-panel">
+      <button className="history-toggle" onClick={() => setOpen((value) => !value)} type="button">
+        <span><History size={17} /> Race History</span>
+        <small>{history.length}/20</small>
+        {open ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+      </button>
+      {open && (
+        <div className="history-table-wrap">
+          {history.length === 0 ? (
+            <div className="history-empty">No race settlements yet.</div>
+          ) : (
+            <table className="history-table">
+              <thead>
+                <tr>
+                  <th>Race</th>
+                  <th>Winner</th>
+                  <th>Your picks</th>
+                  <th>Payout</th>
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((item) => (
+                  <tr key={`${item.raceId}-${item.playedAt}`}>
+                    <td>#{item.raceId}</td>
+                    <td>{catName(item.winnerCat)}</td>
+                    <td>{item.picks}</td>
+                    <td>{safeAmount(Number(item.payout))} SRW</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function AdminPage({
   contractReady,
   isAdmin,
@@ -1438,6 +1850,25 @@ function historyStorageKey(address: string) {
   return `${HISTORY_STORAGE_PREFIX}:${GAME_CONTRACT_ADDRESS}:${address.toLowerCase()}`;
 }
 
+function readStoredCatRaceHistory(address: string): CatRaceHistoryEntry[] {
+  if (!address) return [];
+  try {
+    const raw = localStorage.getItem(catRaceHistoryStorageKey(address));
+    return raw ? JSON.parse(raw) as CatRaceHistoryEntry[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredCatRaceHistory(address: string, history: CatRaceHistoryEntry[]) {
+  if (!address) return;
+  localStorage.setItem(catRaceHistoryStorageKey(address), JSON.stringify(history));
+}
+
+function catRaceHistoryStorageKey(address: string) {
+  return `${CAT_HISTORY_STORAGE_PREFIX}:${GAME_CONTRACT_ADDRESS}:${address.toLowerCase()}`;
+}
+
 function buildLeaderboardRows(players: readonly string[], scores: readonly bigint[], playCounts: readonly bigint[], rewards: readonly string[]): LeaderboardRow[] {
   return players
     .map((address, index) => ({
@@ -1451,6 +1882,43 @@ function buildLeaderboardRows(players: readonly string[], scores: readonly bigin
     }))
     .filter((row) => row.address && row.address !== "0x0000000000000000000000000000000000000000" && row.rawScore > 0n)
     .map(({ rawScore, ...row }) => row);
+}
+
+function buildCatRaceLeaderboardRows(players: readonly string[], wonTotals: readonly bigint[]): CatRaceLeaderboardRow[] {
+  return players
+    .map((address, index) => ({
+      rank: index + 1,
+      address,
+      won: formatEther(wonTotals[index] ?? 0n),
+    }))
+    .filter((row) => row.address && row.address !== "0x0000000000000000000000000000000000000000" && Number(row.won) > 0);
+}
+
+function catName(index: number) {
+  return ["Neon", "Pixel", "Turbo", "Shadow", "Lucky"][index] ?? `Cat ${index + 1}`;
+}
+
+function catGlyph(index: number) {
+  return ["🐱", "😺", "😸", "😼", "😻"][index] ?? "🐱";
+}
+
+function catMotion(cat: number, progress: number, winnerCat: number, phase: CatRacePhase, now: number) {
+  if (phase === "prepare") {
+    return { position: 0, speed: 0, bob: 0, event: "" };
+  }
+  const winner = cat === winnerCat;
+  const seed = (cat + 1) * 17;
+  const wave = Math.sin((progress * 16 + seed + now * 0.08)) * 2.8;
+  const eventSlot = Math.floor(progress * 5);
+  const affected = eventSlot >= 1 && (cat + eventSlot) % 3 === 0;
+  const boosted = eventSlot >= 3 && (cat + eventSlot) % 4 === 1;
+  const eventDelta = affected ? -11 : boosted ? 9 : 0;
+  const cap = winner ? 100 : 86 + ((cat * 7) % 10);
+  const finishBoost = winner ? Math.pow(progress, 3) * 16 : -Math.pow(progress, 2) * (cat + 2);
+  const position = Math.min(Math.max(progress * 86 + wave + eventDelta * 0.55 + finishBoost, 0), cap);
+  const speed = Math.max(Math.round(28 + progress * 14 + wave * 1.8 + eventDelta + (winner ? progress * 10 : 0)), 6);
+  const event = affected ? (eventSlot === 1 ? "stone" : eventSlot === 2 ? "branch" : "bark") : boosted ? "boost" : "";
+  return { position, speed, bob: Math.sin(now * 0.012 + cat) * 4, event };
 }
 
 function moveLabel(game: GameId, move: number) {
@@ -1468,7 +1936,8 @@ function parseRelayerRound(round: {
   payout: string;
 }, game: GameId): RoundResult {
   const status = round.result === 1 ? "win" : round.result === 2 ? "draw" : "lose";
-  const displayPayout = status === "win" ? Number(round.betAmount) * 2 : status === "draw" ? Number(round.betAmount) : 0;
+  const betWei = parseEther(round.betAmount || "0");
+  const displayPayout = status === "win" ? formatEther(betWei * 2n) : status === "draw" ? formatEther(betWei) : "0";
 
   return {
     game,
@@ -1476,7 +1945,7 @@ function parseRelayerRound(round: {
     betAmount: round.betAmount,
     playerMove: round.playerMove,
     outcome: round.outcome,
-    payout: String(displayPayout),
+    payout: displayPayout,
     actualPayout: round.payout,
     roundId: round.roundId,
   };
@@ -1507,6 +1976,25 @@ function parseDirectRound(contract: Contract, logs: readonly { topics: readonly 
   throw new Error("Direct play confirmed but round result was not found.");
 }
 
+function parseCatRaceSettlement(contract: Contract, logs: readonly { topics: readonly string[]; data: string }[]) {
+  for (const log of logs) {
+    try {
+      const parsed = contract.interface.parseLog({ topics: Array.from(log.topics), data: log.data });
+      if (parsed?.name !== "CatRaceSettled") {
+        continue;
+      }
+      return {
+        raceId: Number(parsed.args.raceId),
+        winnerCat: Number(parsed.args.winnerCat),
+        payout: formatEther(parsed.args.payout),
+      };
+    } catch {
+      continue;
+    }
+  }
+  throw new Error("Cat Race settlement confirmed but result was not found.");
+}
+
 function roundMessage(result: RoundResult) {
   if (result.status === "win") {
     return `You won round #${result.roundId}. Payout: ${safeAmount(Number(result.payout))} SRW.`;
@@ -1522,9 +2010,24 @@ function safeAmount(value: number) {
   return value.toFixed(4).replace(/\.?0+$/, "");
 }
 
-function gameRoundCost(betAmount: number, entryFeeBps: number) {
-  if (!Number.isFinite(betAmount) || betAmount <= 0) return 0;
-  return betAmount + (betAmount * entryFeeBps) / 10000;
+function subtractRoundCost(balance: string, bet: string, entryFeeBps: number) {
+  try {
+    const betWei = parseEther(bet || "0");
+    const entryFeeWei = (betWei * BigInt(entryFeeBps)) / 10_000n;
+    const balanceWei = parseEther(balance || "0");
+    const nextBalance = balanceWei > betWei + entryFeeWei ? balanceWei - betWei - entryFeeWei : 0n;
+    return formatEther(nextBalance);
+  } catch {
+    return balance;
+  }
+}
+
+function addEtherStrings(a: string, b: string) {
+  try {
+    return formatEther(parseEther(a || "0") + parseEther(b || "0"));
+  } catch {
+    return a;
+  }
 }
 
 function splitCountdown(totalSeconds: number) {

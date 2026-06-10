@@ -7,109 +7,108 @@
         fill: #17d7e5;
       }
 
-      .st1 {
-        font-family: Inter-SemiBold, Inter;
-        font-size: 66px;
-        font-weight: 600;
-      }
-
-      .st1, .st2, .st3, .st4, .st5 {
-        isolation: isolate;
-      }
-
-      .st1, .st6, .st5 {
+      .st1, .st2, .st3 {
         fill: #fff;
       }
 
-      .st2 {
-        filter: url(#soft);
-        opacity: .1;
-      }
-
-      .st7 {
-        mask: url(#mask);
-      }
-
-      .st8 {
+      .st4 {
         stroke-opacity: .14;
       }
 
-      .st8, .st9, .st10, .st11 {
+      .st4, .st5, .st6, .st7 {
         fill: none;
       }
 
-      .st8, .st9, .st11 {
+      .st4, .st5, .st7 {
         stroke: #0ecbd3;
         stroke-width: 2px;
       }
 
-      .st9 {
+      .st5 {
         stroke-opacity: .18;
       }
 
-      .st12 {
+      .st8 {
         fill: #020606;
       }
 
-      .st13 {
+      .st9 {
         fill: url(#radial-gradient);
       }
 
-      .st3 {
+      .st10 {
         fill: #1bd8e6;
         opacity: .54;
       }
 
-      .st11 {
+      .st10, .st11, .st12, .st13, .st2, .st14, .st3 {
+        isolation: isolate;
+      }
+
+      .st12 {
+        opacity: .1;
+      }
+
+      .st13 {
+        fill: #31d7e6;
+        font-family: Inter-SemiBold, Inter;
+        font-size: 51px;
+        font-weight: 600;
+      }
+
+      .st2 {
+        font-family: Inter-ExtraBold, Inter;
+        font-size: 66px;
+        font-weight: 700;
+      }
+
+      .st7 {
         stroke-opacity: .22;
       }
 
-      .st4 {
+      .st14 {
         fill: url(#dots);
         opacity: .95;
       }
 
-      .st5 {
+      .st3 {
         opacity: .96;
       }
     </style>
-    <radialGradient id="radial-gradient" cx="294.21" cy="656.41" fx="294.21" fy="656.41" r=".62" gradientTransform="translate(-352506 341505) scale(1200 -520)" gradientUnits="userSpaceOnUse">
+    <radialGradient id="radial-gradient" cx="587.96" cy=".85" fx="587.96" fy=".85" r=".62" gradientTransform="translate(-705012 -270) scale(1200 520)" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#27e7f2" stop-opacity=".34"/>
       <stop offset=".48" stop-color="#0a7579" stop-opacity=".14"/>
       <stop offset="1" stop-color="#000" stop-opacity="0"/>
     </radialGradient>
-    <mask id="mask" x="-100.52" y="-150.27" width="1340.52" height="699.89" maskUnits="userSpaceOnUse">
-      <g id="fade">
-        <rect width="1200" height="520"/>
-        <ellipse class="st6" cx="615" cy="302" rx="610" ry="230"/>
-      </g>
-    </mask>
-    <pattern id="dots" x="0" y="0" width="22" height="22" patternTransform="translate(-8 -16694.1807) rotate(-8) scale(1.0098 -.9903) skewX(7.847)" patternUnits="userSpaceOnUse" viewBox="0 0 22 22">
+    <pattern id="dots" x="0" y="0" width="22" height="22" patternTransform="translate(-16.1475 16946.2914) rotate(-8) skewX(-7.847)" patternUnits="userSpaceOnUse" viewBox="0 0 22 22">
       <g>
-        <rect class="st10" width="22" height="22"/>
-        <circle class="st3" cx="3" cy="19" r="1.7"/>
+        <rect class="st6" width="22" height="22"/>
+        <g>
+          <rect class="st6" width="22" height="22"/>
+          <circle class="st10" cx="3" cy="3" r="1.7"/>
+        </g>
       </g>
     </pattern>
-    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="12"/>
-    </filter>
   </defs>
-  <rect class="st12" width="1200" height="520"/>
-  <rect class="st13" width="1200" height="520"/>
-  <g class="st7">
-    <g>
-      <path class="st11" d="M-100,384C230,184,470,164,1220,72"/>
-      <path class="st9" d="M-100,430C290,230,520,190,1220,116"/>
-      <path class="st8" d="M-100,476c430-182,700-242,1320-314"/>
-      <polygon class="st4" points="-40 29.62 1240 -150.27 1240 369.73 -40 549.62 -40 29.62"/>
-    </g>
+  <rect class="st8" width="1200" height="520"/>
+  <rect class="st9" width="1200" height="520"/>
+  <g>
+    <path class="st7" d="M-100,384C230,184,470,164,1220,72"/>
+    <path class="st5" d="M-100,430C290,230,520,190,1220,116"/>
+    <path class="st4" d="M-100,476c430-182,700-242,1320-314"/>
+    <polygon class="st14" points="-40 29.62 1240 -150.27 1240 369.73 -40 549.62 -40 29.62"/>
   </g>
-  <g class="st2">
+  <g class="st12">
     <ellipse class="st0" cx="575" cy="260" rx="325" ry="96"/>
   </g>
   <g>
-    <path class="st6" d="M368.28,181.45l65,11.46-30.98,77.8-91.58,18.38,57.57-107.64Z"/>
-    <path class="st5" d="M417.72,363.55l-65-11.46,30.98-77.8,91.58-18.38-57.57,107.64Z"/>
+    <path class="st1" d="M368.28,181.45l65,11.46-30.98,77.8-91.58,18.38,57.57-107.64h0Z"/>
+    <path class="st3" d="M417.72,363.55l-65-11.46,30.98-77.8,91.58-18.38-57.57,107.64h0Z"/>
   </g>
-  <text class="st1" transform="translate(498 270)"><tspan x="0" y="0">SimpleChain</tspan></text>
+  <g class="st11">
+    <text class="st2" transform="translate(498 270)"><tspan x="0" y="0">Simple</tspan></text>
+  </g>
+  <g class="st11">
+    <text class="st13" transform="translate(498 333.66)"><tspan x="0" y="0">PLAYGROUND</tspan></text>
+  </g>
 </svg>

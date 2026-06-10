@@ -1,4 +1,4 @@
-import { BrowserProvider, Contract, parseEther } from "ethers";
+import { AbstractProvider, Contract, parseEther } from "ethers";
 import { GAME_CONTRACT_ADDRESS } from "./simpleChain";
 
 export const PLAYGROUND_ABI = [
@@ -12,6 +12,12 @@ export const PLAYGROUND_ABI = [
   "function leaderboardEpochDuration() view returns (uint256)",
   "function leaderboardRewardsInfo() view returns (uint256[10] rewards)",
   "function leaderboardEpochInfo(uint256 epoch) view returns (address[10] players, int256[10] scores, uint256[10] playCounts, uint256 startedAt, uint256 endsAt, bool rewardsSettled)",
+  "function currentCatRaceId() view returns (uint256)",
+  "function catRaceCurrentInfo() view returns (tuple(uint256 raceId,uint8 phase,uint256 startedAt,uint256 bettingEndsAt,uint256 endsAt,uint8 winnerCat,uint256[5] totalBets))",
+  "function catRaceRoundInfo(uint256 raceId) view returns (tuple(uint256 raceId,uint8 phase,uint256 startedAt,uint256 bettingEndsAt,uint256 endsAt,uint8 winnerCat,uint256[5] totalBets))",
+  "function catRaceLeaderboardInfo() view returns (address[10] players, uint256[10] wonTotals)",
+  "function catRacePlayerBets(uint256 raceId, address player, uint8 cat) view returns (uint256)",
+  "function catRaceClaimed(uint256 raceId, address player) view returns (bool)",
   "function playerBalances(address player) view returns (uint256)",
   "function sessionSpent(bytes32 sessionHash) view returns (uint256)",
   "function trustedRelayers(address relayer) view returns (bool)",
@@ -29,6 +35,8 @@ export const PLAYGROUND_ABI = [
   "function settleLeaderboardRewards(uint256 epoch)",
   "function setLeaderboardRewards(uint256[10] rewards)",
   "function setLeaderboardCycleDays(uint16 cycleDays)",
+  "function placeCatRaceBet(uint8 cat, uint256 betAmount) returns (uint256)",
+  "function settleCatRaceBet(uint256 raceId) returns (uint256)",
   "event TrustedRelayerUpdated(address indexed relayer, bool trusted)",
   "event ServerSeedCommitted(bytes32 indexed serverSeedHash, address indexed relayer)",
   "event ServerSeedRevealed(bytes32 indexed serverSeedHash, bytes32 indexed nextServerSeedHash, address indexed relayer)",
@@ -38,10 +46,12 @@ export const PLAYGROUND_ABI = [
   "event LeaderboardRewardPaid(uint256 indexed epoch, uint8 rank, address indexed player, uint256 amount)",
   "event LeaderboardRewardsSettled(uint256 indexed epoch, uint256 totalRewards)",
   "event LeaderboardRewardUpdated(uint8 indexed rank, uint256 amount)",
-  "event LeaderboardCycleUpdated(uint256 duration)"
+  "event LeaderboardCycleUpdated(uint256 duration)",
+  "event CatRaceBetPlaced(uint256 indexed raceId, address indexed player, uint8 indexed cat, uint256 amount)",
+  "event CatRaceSettled(uint256 indexed raceId, address indexed player, uint8 indexed winnerCat, uint256 payout)"
 ];
 
-export function getPlaygroundContract(provider: BrowserProvider) {
+export function getPlaygroundContract(provider: AbstractProvider) {
   if (!GAME_CONTRACT_ADDRESS) {
     throw new Error("Missing VITE_GAME_CONTRACT_ADDRESS");
   }
