@@ -21,6 +21,9 @@ const ABI = [
   "function serverSeedCommitments(bytes32 serverSeedHash) view returns (bool)",
   "function commitServerSeed(bytes32 serverSeedHash)",
   "function playRelayed((address player,uint8 gameType,uint8 playerMove,uint256 betAmount,bytes32 playerSeed,uint256 sessionAllowance,uint64 sessionExpiresAt,uint256 sessionNonce,bytes sessionSignature,bytes32 serverSeed,bytes32 nextServerSeedHash) play) returns (uint256)",
+  "function startCatRace(uint256 raceId) returns (uint8)",
+  "function catRaceRoundInfo(uint256 raceId) view returns (tuple(uint256 raceId,uint8 phase,uint256 startedAt,uint256 bettingEndsAt,uint256 endsAt,uint8 winnerCat,uint256[5] totalBets))",
+  "event CatRaceStarted(uint256 indexed raceId, uint8 indexed winnerCat)",
   "event RoundSettled(uint256 indexed roundId, address indexed player, uint8 gameType, uint256 betAmount, uint8 playerMove, uint8 outcome, uint8 result, uint256 payout)",
   "event RoundRandomness(uint256 indexed roundId, bytes32 indexed playerSeed, bytes32 indexed serverSeedHash)",
 ];
@@ -229,6 +232,36 @@ async function handlePlay(body) {
   };
 }
 
+async function handleCatRaceStart(body) {
+  if (!contract || !relayer) throw new Error("Relayer server is missing VITE_GAME_CONTRACT_ADDRESS or RELAYER_PRIVATE_KEY");
+  const raceId = BigInt(body?.raceId || 0);
+  if (raceId <= 0n) throw new Error("Missing raceId");
+
+  const info = await contract.catRaceRoundInfo(raceId);
+  if (Number(info.winnerCat) < 5) {
+    return { raceId: raceId.toString(), winnerCat: Number(info.winnerCat), alreadyStarted: true };
+  }
+
+  log("STEP", `Starting cat race ${raceId.toString()}`, { wallet: relayer.address, step: "cat_race_start", style: "step" });
+  const tx = await contract.startCatRace(raceId);
+  log("INFO", `Cat race start tx submitted ${tx.hash}`, { wallet: relayer.address, step: "cat_race_start" });
+  const receipt = await tx.wait();
+  let winnerCat = 5;
+  for (const entry of receipt.logs) {
+    try {
+      const parsed = contract.interface.parseLog(entry);
+      if (parsed?.name === "CatRaceStarted") {
+        winnerCat = Number(parsed.args.winnerCat);
+        break;
+      }
+    } catch {
+      continue;
+    }
+  }
+  log("OK", `Cat race ${raceId.toString()} winner ${winnerCat}`, { wallet: relayer.address, step: "cat_race_start", style: "success" });
+  return { raceId: raceId.toString(), winnerCat, txHash: tx.hash };
+}
+
 createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     jsonResponse(res, 204, {});
@@ -274,6 +307,13 @@ createServer(async (req, res) => {
       playQueue = resultPromise.catch(() => {});
       const result = await resultPromise;
       jsonResponse(res, 200, { ok: true, round: result.round, account: result.account });
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/cat-race/start") {
+      const body = await readBody(req);
+      const result = await handleCatRaceStart(body);
+      jsonResponse(res, 200, { ok: true, ...result });
       return;
     }
 

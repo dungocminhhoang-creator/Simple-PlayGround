@@ -64,7 +64,7 @@ contract SimplePlayground {
     uint256 public immutable catRaceGenesis;
     uint256 public leaderboardEpochDuration = 5 days;
     uint256 public catRacePrepareDuration = 30 seconds;
-    uint256 public catRaceRunDuration = 90 seconds;
+    uint256 public catRaceRunDuration = 30 seconds;
     uint256 public constant MIN_LEADERBOARD_GAMES = 100;
 
     bytes32 public immutable DOMAIN_SEPARATOR;
@@ -85,6 +85,7 @@ contract SimplePlayground {
     mapping(uint256 => mapping(uint8 => uint256)) public catRaceTotalBets;
     mapping(uint256 => mapping(address => mapping(uint8 => uint256))) public catRacePlayerBets;
     mapping(uint256 => mapping(address => bool)) public catRaceClaimed;
+    mapping(uint256 => uint8) private catRaceWinners;
     mapping(address => uint256) public catRaceWonTotals;
     address[10] private catRaceTopPlayers;
 
@@ -115,6 +116,7 @@ contract SimplePlayground {
     event LeaderboardRewardUpdated(uint8 indexed rank, uint256 amount);
     event LeaderboardCycleUpdated(uint256 duration);
     event CatRaceBetPlaced(uint256 indexed raceId, address indexed player, uint8 indexed cat, uint256 amount);
+    event CatRaceStarted(uint256 indexed raceId, uint8 indexed winnerCat);
     event CatRaceSettled(uint256 indexed raceId, address indexed player, uint8 indexed winnerCat, uint256 payout);
 
     modifier onlyOwner() {
@@ -237,6 +239,10 @@ contract SimplePlayground {
         }
     }
 
+    function startCatRace(uint256 raceId) external returns (uint8 winnerCat) {
+        winnerCat = _ensureCatRaceStarted(raceId);
+    }
+
     function leaderboardEpochInfo(uint256 epoch)
         external
         view
@@ -321,7 +327,7 @@ contract SimplePlayground {
         require(!catRaceClaimed[raceId][msg.sender], "already claimed");
         catRaceClaimed[raceId][msg.sender] = true;
 
-        uint8 winnerCat = _catRaceWinner(raceId);
+        uint8 winnerCat = _ensureCatRaceStarted(raceId);
         uint256 winningBet = catRacePlayerBets[raceId][msg.sender][winnerCat];
         if (winningBet > 0) {
             uint256 grossPayout = winningBet * 5;
@@ -613,8 +619,43 @@ contract SimplePlayground {
     }
 
     function _catRaceWinner(uint256 raceId) private view returns (uint8) {
+        uint8 storedWinner = catRaceWinners[raceId];
+        return storedWinner == 0 ? uint8(5) : storedWinner - 1;
+    }
+
+    function _ensureCatRaceStarted(uint256 raceId) private returns (uint8 winnerCat) {
+        require(raceId > 0, "zero race");
         (, uint256 bettingEndsAt, ) = catRaceRoundBounds(raceId);
-        return uint8(uint256(keccak256(abi.encodePacked(raceId, bettingEndsAt, address(this), block.chainid))) % 5);
+        require(block.timestamp >= bettingEndsAt, "betting open");
+
+        uint8 storedWinner = catRaceWinners[raceId];
+        if (storedWinner != 0) {
+            return storedWinner - 1;
+        }
+
+        uint256 totalRaceBets = 0;
+        for (uint8 i = 0; i < 5; i++) {
+            totalRaceBets += catRaceTotalBets[raceId][i];
+        }
+
+        winnerCat = uint8(
+            uint256(
+                keccak256(
+                    abi.encodePacked(
+                        raceId,
+                        totalRaceBets,
+                        blockhash(block.number - 1),
+                        block.prevrandao,
+                        block.timestamp,
+                        msg.sender,
+                        address(this),
+                        block.chainid
+                    )
+                )
+            ) % 5
+        );
+        catRaceWinners[raceId] = winnerCat + 1;
+        emit CatRaceStarted(raceId, winnerCat);
     }
 
     function _sortCatRaceLeaderboard(address player) private {

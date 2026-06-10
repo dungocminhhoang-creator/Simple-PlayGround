@@ -4,7 +4,7 @@ import { AbstractProvider, BrowserProvider, Contract, JsonRpcProvider, formatEth
 import { Brand } from "./components/Brand";
 import { BetSelector } from "./components/BetSelector";
 import { WalletBar } from "./components/WalletBar";
-import { GAME_CONTRACT_ADDRESS, RELAYER_URL, SIMPLE_CHAIN_ID, SIMPLE_RPC_URL, shortAddress } from "./lib/simpleChain";
+import { DEMO_MODE, GAME_CONTRACT_ADDRESS, RELAYER_URL, SIMPLE_CHAIN_ID, SIMPLE_RPC_URL, shortAddress } from "./lib/simpleChain";
 import { PLAYGROUND_ABI, getPlaygroundContract } from "./lib/contract";
 import { WalletState, connectWallet, getAuthorizedWallet } from "./lib/wallet";
 
@@ -76,6 +76,7 @@ type LeaderboardState = {
   previousRows: LeaderboardRow[];
 };
 type CatRacePhase = "prepare" | "race" | "settled";
+type CatRaceDisplayPhase = "prepare" | "race" | "finish";
 type CatRaceLeaderboardRow = {
   rank: number;
   address: string;
@@ -107,8 +108,12 @@ type CatRaceState = {
 const SESSION_STORAGE_PREFIX = "simple-playground-relayer-session";
 const HISTORY_STORAGE_PREFIX = "simple-playground-history";
 const CAT_HISTORY_STORAGE_PREFIX = "simple-playground-cat-race-history";
+const WALLET_LOGOUT_STORAGE_KEY = "simple-playground-wallet-logged-out";
 const AUTO_SESSION_ALLOWANCE = "1000000";
 const AUTO_SESSION_DURATION_SECONDS = 30 * 24 * 60 * 60;
+const CAT_RACE_PREPARE_SECONDS = 30;
+const CAT_RACE_RUN_SECONDS = 30;
+const CAT_RACE_FINISH_SECONDS = 5;
 const emptyWallet: WalletState = { provider: null, address: "", balance: "0", chainId: "" };
 const emptyAccount: AccountState = { gameBalance: "0", sessionSpent: "0" };
 const emptyHealth: RelayerHealth = { ok: false, contractAddress: "", relayerAddress: "", trusted: false, currentSeedHash: "", seedCommitted: false };
@@ -208,8 +213,24 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (DEMO_MODE) return;
     void loadCatRace(publicProvider, wallet.address);
     const interval = window.setInterval(() => void loadCatRace(publicProvider, wallet.address), 5000);
+    return () => window.clearInterval(interval);
+  }, [wallet.address]);
+
+  useEffect(() => {
+    if (DEMO_MODE) return;
+    if (catRace.phase === "race" && catRace.winnerCat >= 5) {
+      void startCatRaceViaRelayer(catRace.raceId);
+    }
+  }, [catRace.phase, catRace.raceId, catRace.winnerCat]);
+
+  useEffect(() => {
+    if (!DEMO_MODE) return;
+    const updateDemo = () => setCatRace(buildDemoCatRace(Math.floor(Date.now() / 1000), wallet.address));
+    updateDemo();
+    const interval = window.setInterval(updateDemo, 1000);
     return () => window.clearInterval(interval);
   }, [wallet.address]);
 
@@ -218,6 +239,9 @@ export function App() {
 
     async function restoreWallet() {
       try {
+        if (localStorage.getItem(WALLET_LOGOUT_STORAGE_KEY) === "1") {
+          return;
+        }
         const restored = await getAuthorizedWallet();
         if (!cancelled && restored) {
           setWallet(restored);
@@ -298,6 +322,7 @@ export function App() {
   async function handleConnect() {
     try {
       setBusy(true);
+      localStorage.removeItem(WALLET_LOGOUT_STORAGE_KEY);
       const next = await connectWallet();
       const stored = readStoredSession(next.address);
       setWallet(next);
@@ -319,7 +344,11 @@ export function App() {
   }
 
   async function loadPublicChainState() {
-    await Promise.all([loadSettings(publicProvider), loadLeaderboard(publicProvider), loadCatRace(publicProvider, wallet.address)]);
+    await Promise.all([
+      loadSettings(publicProvider),
+      loadLeaderboard(publicProvider),
+      DEMO_MODE ? Promise.resolve() : loadCatRace(publicProvider, wallet.address),
+    ]);
   }
 
   async function refreshChainState(provider = wallet.provider, address = wallet.address, session = relayerSession) {
@@ -331,6 +360,7 @@ export function App() {
   }
 
   function handleDisconnect() {
+    localStorage.setItem(WALLET_LOGOUT_STORAGE_KEY, "1");
     setWallet(emptyWallet);
     setAccount(emptyAccount);
     setRelayerSession(null);
@@ -723,6 +753,17 @@ export function App() {
   }
 
   async function placeCatRaceBet(cat: number, bet: string) {
+    if (DEMO_MODE) {
+      setStatus({ tone: "ok", message: `Demo bet placed on ${catName(cat)}.` });
+      setCatRace((current) => {
+        const totalBets = [...current.totalBets];
+        const playerBets = [...current.playerBets];
+        totalBets[cat] = addEtherStrings(totalBets[cat] ?? "0", bet);
+        playerBets[cat] = addEtherStrings(playerBets[cat] ?? "0", bet);
+        return { ...current, totalBets, playerBets };
+      });
+      return;
+    }
     if (!(await ensurePlayable()) || !wallet.provider || !wallet.address) return;
     const accountBeforeBet = account;
     try {
@@ -747,6 +788,27 @@ export function App() {
   }
 
   async function settleCatRaceBet(raceId: number) {
+    if (DEMO_MODE) {
+      const payout = catRace.previousPlayerBets[catRace.previousWinnerCat] ? String(Number(catRace.previousPlayerBets[catRace.previousWinnerCat]) * 5) : "0";
+      const entry = {
+        raceId: String(raceId || catRace.previousRaceId || 1),
+        winnerCat: catRace.previousWinnerCat,
+        picks: catRace.previousPlayerBets
+          .map((amount, index) => Number(amount) > 0 ? `${catName(index)} ${safeAmount(Number(amount))}` : "")
+          .filter(Boolean)
+          .join(", ") || "Demo picks",
+        payout,
+        playedAt: Date.now(),
+      };
+      setCatRaceHistory((current) => [entry, ...current].slice(0, 20));
+      setSuccessPopup({
+        title: Number(payout) > 0 ? "Demo payout" : "Demo race settled",
+        amount: `${safeAmount(Number(payout))} SRW`,
+        detail: `${catName(catRace.previousWinnerCat)} crossed the finish line.`,
+      });
+      setStatus({ tone: Number(payout) > 0 ? "ok" : "info", message: `Demo race #${entry.raceId} settled.` });
+      return;
+    }
     if (!(await ensurePlayable()) || !wallet.provider || !wallet.address || !raceId) return;
     try {
       setBusy(true);
@@ -778,6 +840,20 @@ export function App() {
       setStatus({ tone: "error", message: getErrorMessage(error) });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function startCatRaceViaRelayer(raceId: number) {
+    if (!raceId) return;
+    try {
+      await fetch(`${RELAYER_URL}/api/cat-race/start`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ raceId }),
+      });
+      await loadCatRace(publicProvider, wallet.address);
+    } catch {
+      // Wallet fallback still lets the first claimant finalize the race after it ends.
     }
   }
 
@@ -1452,7 +1528,9 @@ function CatRacePage({
   const betAmount = Number(bet || "0");
   const totalCost = betAmount + (betAmount * settings.entryFeeBps) / 10000;
   const worstCasePayout = betAmount * 5 - (betAmount * 5 * settings.winFeeBps) / 10000;
-  const isPrepare = catRace.phase === "prepare";
+  const displayPhase = catRaceDisplayPhase(catRace, now);
+  const isPrepare = displayPhase === "prepare";
+  const isFinish = displayPhase === "finish";
   const canBet = isPrepare
     && betAmount > 0
     && betAmount >= Number(settings.minBet)
@@ -1462,8 +1540,10 @@ function CatRacePage({
   const canClaim = catRace.previousRaceId > 0
     && !catRace.previousClaimed
     && catRace.previousPlayerBets.some((amount) => Number(amount) > 0);
-  const remaining = Math.max((isPrepare ? catRace.bettingEndsAt : catRace.endsAt) - now, 0);
+  const remaining = catRacePhaseRemaining(catRace, now, displayPhase);
   const countdown = splitCountdown(remaining);
+  const urgentCountdown = remaining > 0 && remaining <= 10;
+  const totalRacePool = catRace.totalBets.reduce((sum, amount) => sum + Number(amount), 0);
 
   return (
     <div className="cat-race-layout">
@@ -1473,26 +1553,30 @@ function CatRacePage({
             <span>Multiplayer Race</span>
             <h2>Cat Race #{catRace.raceId || "-"}</h2>
           </div>
-          <div className={`race-phase race-phase--${catRace.phase}`}>
+          {DEMO_MODE && <div className="demo-pill">Demo Mode</div>}
+          <div className={`race-phase race-phase--${displayPhase}`}>
             <Flag size={17} />
-            {isPrepare ? "Prepare for race" : catRace.phase === "race" ? "Race running" : "Race complete"}
+            {displayPhase === "prepare" ? "Prepare for race" : displayPhase === "race" ? "Race running" : "Finish celebration"}
           </div>
         </div>
 
-        <div className="race-clock">
-          <strong>{countdown.minutes}:{countdown.seconds}</strong>
-          <span>{isPrepare ? "Betting closes soon" : "Finish line countdown"}</span>
-        </div>
+        {!isPrepare && (
+          <div className={urgentCountdown ? "race-clock race-clock--urgent" : "race-clock"}>
+            <strong>{countdown.minutes}:{countdown.seconds}</strong>
+            <span>{displayPhase === "race" ? "Finish line countdown" : "Next race starts soon"}</span>
+          </div>
+        )}
 
-        <CatRaceArena catRace={catRace} now={now} />
+        <CatRaceArena catRace={catRace} displayPhase={displayPhase} now={now} phaseRemaining={remaining} urgentCountdown={urgentCountdown} />
 
         <div className="cat-bet-grid">
           {catRace.totalBets.map((amount, index) => (
             <button className={selectedCat === index ? "cat-card cat-card--active" : "cat-card"} key={index} onClick={() => setSelectedCat(index)} type="button">
-              <span className="cat-avatar">{catGlyph(index)}</span>
+              <span className="cat-avatar"><CatSprite cat={index} mini /></span>
               <strong>{catName(index)}</strong>
               <small>Total {safeAmount(Number(amount))} SRW</small>
               <em>Your bet {safeAmount(Number(catRace.playerBets[index] ?? "0"))} SRW</em>
+              <i>5.00x</i>
             </button>
           ))}
         </div>
@@ -1508,9 +1592,10 @@ function CatRacePage({
             <div><dt>Selected cat</dt><dd>{catName(selectedCat)}</dd></div>
             <div><dt>Bet</dt><dd>{safeAmount(betAmount)} SRW</dd></div>
             <div><dt>Prize target</dt><dd>{safeAmount(betAmount * 5)} SRW</dd></div>
+            <div><dt>Race pool</dt><dd>{safeAmount(totalRacePool)} SRW</dd></div>
           </dl>
         </div>
-        {!isPrepare && <div className="play-warning">Betting is locked while the cats are racing.</div>}
+        {!isPrepare && <div className="play-warning">{isFinish ? "The winner is crossing the finish line. Next betting round starts soon." : "Betting is locked while the cats are racing."}</div>}
         {isPrepare && !canBet && <div className="play-warning">Check game balance, pool liquidity, and bet limits before placing a race bet.</div>}
         <button className="primary-action" disabled={busy || !canBet} onClick={() => onBet(selectedCat, bet)} type="button">
           {busy ? <Loader2 className="spin" size={18} /> : <Cat size={18} />}
@@ -1522,7 +1607,7 @@ function CatRacePage({
         </button>
         <div className="cat-result-box">
           <span>Previous winner</span>
-          <strong>{catRace.previousRaceId ? catName(catRace.previousWinnerCat) : "-"}</strong>
+          <strong>{catRace.previousRaceId && catRace.previousWinnerCat < 5 ? catName(catRace.previousWinnerCat) : "-"}</strong>
           <small>{canClaim ? "Your previous race can be settled." : "Settled results appear in history."}</small>
         </div>
         <CatRaceLeaderboard rows={catRace.leaderboard} />
@@ -1531,48 +1616,96 @@ function CatRacePage({
   );
 }
 
-function CatRaceArena({ catRace, now }: { catRace: CatRaceState; now: number }) {
-  const raceProgress = catRace.phase === "race"
-    ? Math.min(Math.max((now - catRace.bettingEndsAt) / Math.max(catRace.endsAt - catRace.bettingEndsAt, 1), 0), 1)
-    : catRace.phase === "settled"
-      ? 1
-      : 0;
-  const eventIndex = catRace.phase === "race" ? Math.floor(raceProgress * 5) : -1;
-  const eventLabels = ["Fast start", "Stone stumble", "Falling branch", "Dog bark", "Final sprint"];
+function CatRaceArena({
+  catRace,
+  displayPhase,
+  now,
+  phaseRemaining,
+  urgentCountdown,
+}: {
+  catRace: CatRaceState;
+  displayPhase: CatRaceDisplayPhase;
+  now: number;
+  phaseRemaining: number;
+  urgentCountdown: boolean;
+}) {
+  const finishWinnerCat = displayPhase === "finish" && catRace.phase === "prepare" ? catRace.previousWinnerCat : catRace.winnerCat;
+  const winnerKnown = finishWinnerCat < 5;
+  const raceProgress = catRaceRaceProgress(catRace, now, displayPhase);
+  const finishVisible = displayPhase === "finish" || (displayPhase === "race" && raceProgress >= 0.72);
+  const revealWinner = winnerKnown && displayPhase === "finish";
+  const finishApproach = Math.min(Math.max((raceProgress - 0.72) / 0.28, 0), 1);
+  const startLineX = displayPhase === "prepare" ? 7 : 7 - raceProgress * 52;
+  const startLineOpacity = displayPhase === "prepare" ? 1 : Math.max(1 - raceProgress * 4, 0);
+  const finishLineX = displayPhase === "finish" ? 95 : 126 - finishApproach * 31;
+  const popupCountdown = splitCountdown(phaseRemaining);
 
   return (
-    <div className={`cat-race-arena cat-race-arena--${catRace.phase}`}>
+    <div
+      className={`cat-race-arena cat-race-arena--${displayPhase} ${finishVisible ? "cat-race-arena--finish-visible" : ""} ${revealWinner ? "cat-race-arena--finished" : ""}`}
+      style={{ "--race-progress": raceProgress, "--start-line-x": `${startLineX}%`, "--start-line-opacity": startLineOpacity, "--finish-line-x": `${finishLineX}%` } as CSSProperties}
+    >
       <div className="race-event-strip">
-        <strong>{catRace.phase === "prepare" ? "Choose your racer" : eventLabels[Math.min(Math.max(eventIndex, 0), eventLabels.length - 1)]}</strong>
-        <span>{catRace.phase === "race" ? "Speed changes in real time" : "Gates open after betting closes"}</span>
+        <strong>{displayPhase === "race" ? "Road sprint" : displayPhase === "finish" ? "Finish moment" : "Choose your racer"}</strong>
+        <span>{displayPhase === "race" ? "Start line falls behind. Finish gate approaches." : displayPhase === "finish" ? "Winner crosses. Next round starts in seconds." : "Choose a cat and place your SRW bet."}</span>
       </div>
+      <div className="finish-gate"><span>FINISH</span></div>
+      {displayPhase === "prepare" && (
+        <div className={urgentCountdown ? "betting-popup betting-popup--urgent" : "betting-popup"}>
+          <img alt="" src="/assets/cat-winner-laugh.png" />
+          <div>
+            <span>{catRace.previousRaceId > 0 ? `Last winner: ${catName(catRace.previousWinnerCat)}` : "Cat Race is open"}</span>
+            <strong>{urgentCountdown ? "Last chance to bet" : "Pick your cat now"}</strong>
+            <p>{urgentCountdown ? "Betting closes in the final seconds." : "Choose a racer, set your SRW amount, and join the next 30-second sprint."}</p>
+          </div>
+          <b className={urgentCountdown ? "betting-popup-clock betting-popup-clock--urgent" : "betting-popup-clock"}>{popupCountdown.minutes}:{popupCountdown.seconds}</b>
+        </div>
+      )}
       {[0, 1, 2, 3, 4].map((cat) => {
-        const motion = catMotion(cat, raceProgress, catRace.winnerCat, catRace.phase, now);
+        const motion = catMotion(cat, raceProgress, winnerKnown ? finishWinnerCat : -1, displayPhase === "prepare" ? "prepare" : "race", now);
+        const isWinner = revealWinner && cat === finishWinnerCat;
+        const isLoser = revealWinner && cat !== finishWinnerCat;
         return (
           <div className="cat-lane" key={cat}>
-            <span className="lane-label">{catName(cat)}</span>
+            <span className="lane-label">{catName(cat)}<small>{safeAmount(Number(catRace.totalBets[cat] ?? "0"))} SRW</small></span>
             <div className="lane-track">
               <span className="start-line" />
               <span className="finish-line" />
               <div
-                className={`cat-runner ${catRace.phase === "race" ? "cat-runner--racing" : ""} ${catRace.phase !== "prepare" && cat === catRace.winnerCat ? "cat-runner--winner" : ""}`}
-                style={{ "--cat-x": `${motion.position}%`, "--cat-bob": `${motion.bob}px` } as CSSProperties}
+                className={`cat-runner cat-runner--${cat} ${displayPhase === "race" ? "cat-runner--racing" : ""} ${isWinner ? "cat-runner--winner cat-runner--finish-winner" : ""} ${isLoser ? "cat-runner--loser-cry" : ""}`}
+                style={{ "--cat-x": `${motion.position}%`, "--cat-bob": `${motion.bob}px`, "--cat-color": catColor(cat), "--cat-accent": catAccent(cat) } as CSSProperties}
               >
                 <span className="cat-speed"><Gauge size={12} /> {motion.speed} km/h</span>
-                <span className="cat-sprite">{catGlyph(cat)}</span>
-                {motion.event && <span className="cat-event">{motion.event}</span>}
+                <CatSprite cat={cat} expression={isWinner ? "happy" : isLoser ? "cry" : ""} />
               </div>
             </div>
           </div>
         );
       })}
-      {catRace.phase !== "prepare" && raceProgress >= 0.98 && (
+      {revealWinner && (
+        <div className="race-fireworks" aria-hidden="true">
+          <i /><i /><i /><i /><i />
+        </div>
+      )}
+      {revealWinner && (
         <div className="race-winner-banner">
-          <strong>{catName(catRace.winnerCat)} wins</strong>
-          <span>Race #{catRace.raceId} crossed the finish line.</span>
+          <strong>{catName(finishWinnerCat)} wins</strong>
+          <span>The winner crossed the finish line. Next race starts now.</span>
         </div>
       )}
     </div>
+  );
+}
+
+function CatSprite({ cat, expression = "", mini = false }: { cat: number; expression?: string; mini?: boolean }) {
+  return (
+    <span className={mini ? `cat-sprite cat-sprite--mini cat-sprite--${cat} cat-sprite--${expression}` : `cat-sprite cat-sprite--${cat} cat-sprite--${expression}`} aria-hidden="true">
+      <i className="cat-tail" />
+      <i className="cat-body" />
+      <i className="cat-head"><b /><b /><em /></i>
+      <i className="cat-leg cat-leg--front" />
+      <i className="cat-leg cat-leg--back" />
+    </span>
   );
 }
 
@@ -1894,6 +2027,40 @@ function buildCatRaceLeaderboardRows(players: readonly string[], wonTotals: read
     .filter((row) => row.address && row.address !== "0x0000000000000000000000000000000000000000" && Number(row.won) > 0);
 }
 
+function catRaceDisplayPhase(catRace: CatRaceState, now: number): CatRaceDisplayPhase {
+  if (catRace.phase === "settled") return "finish";
+  if (catRace.phase === "prepare" && catRace.previousRaceId > 0 && now - catRace.startedAt < CAT_RACE_FINISH_SECONDS) {
+    return "finish";
+  }
+  return catRace.phase === "race" ? "race" : "prepare";
+}
+
+function catRacePhaseRemaining(catRace: CatRaceState, now: number, displayPhase: CatRaceDisplayPhase) {
+  if (displayPhase === "finish") {
+    if (catRace.phase === "prepare") {
+      return Math.max((catRace.startedAt || now) + CAT_RACE_FINISH_SECONDS - now, 0);
+    }
+    return Math.max((catRace.endsAt || now) + CAT_RACE_FINISH_SECONDS - now, 0);
+  }
+  if (displayPhase === "prepare") {
+    const phaseEnd = Math.min(catRace.bettingEndsAt || now, (catRace.startedAt || now) + CAT_RACE_PREPARE_SECONDS);
+    return Math.max(phaseEnd - now, 0);
+  }
+  if (displayPhase === "race") {
+    const phaseEnd = Math.min(catRace.endsAt || now, (catRace.bettingEndsAt || now) + CAT_RACE_RUN_SECONDS);
+    return Math.max(phaseEnd - now, 0);
+  }
+  return 0;
+}
+
+function catRaceRaceProgress(catRace: CatRaceState, now: number, displayPhase: CatRaceDisplayPhase) {
+  if (displayPhase === "finish") return 1;
+  if (catRace.phase === "settled") return 1;
+  if (catRace.phase !== "race") return 0;
+  const raceStartedAt = catRace.bettingEndsAt || now;
+  return Math.min(Math.max((now - raceStartedAt) / CAT_RACE_RUN_SECONDS, 0), 1);
+}
+
 function catName(index: number) {
   return ["Neon", "Pixel", "Turbo", "Shadow", "Lucky"][index] ?? `Cat ${index + 1}`;
 }
@@ -1902,23 +2069,75 @@ function catGlyph(index: number) {
   return ["🐱", "😺", "😸", "😼", "😻"][index] ?? "🐱";
 }
 
+function catColor(index: number) {
+  return ["#34e4f4", "#39f29a", "#ffd166", "#ff4dce", "#f4fbff"][index] ?? "#34e4f4";
+}
+
+function catAccent(index: number) {
+  return ["#9af8ff", "#b3ffd8", "#fff0ad", "#ffb2ed", "#34e4f4"][index] ?? "#9af8ff";
+}
+
+function buildDemoCatRace(now: number, address: string): CatRaceState {
+  const cycle = CAT_RACE_PREPARE_SECONDS + CAT_RACE_RUN_SECONDS + CAT_RACE_FINISH_SECONDS;
+  const base = Math.floor(now / cycle) * cycle;
+  const elapsed = now - base;
+  const raceId = Math.floor(now / cycle) + 1;
+  const phase: CatRacePhase = elapsed < CAT_RACE_PREPARE_SECONDS
+    ? "prepare"
+    : elapsed < CAT_RACE_PREPARE_SECONDS + CAT_RACE_RUN_SECONDS
+      ? "race"
+      : "settled";
+  const winnerCat = (raceId * 7 + 2) % 5;
+  const previousWinnerCat = ((raceId - 1) * 7 + 2) % 5;
+  const totalBets = [0, 1, 2, 3, 4].map((cat) => {
+    const amount = 12 + ((raceId + cat * 3) % 9) * 1.35 + (elapsed < 30 ? elapsed * (cat + 1) * 0.015 : 0);
+    return amount.toFixed(4);
+  });
+  const playerBets = address
+    ? ["0.1", "0", "0.25", "0", "0"]
+    : ["0", "0", "0", "0", "0"];
+  const previousPlayerBets = ["0", "0.2", "0", "0", "0.15"];
+  return {
+    raceId,
+    phase,
+    startedAt: base,
+    bettingEndsAt: base + CAT_RACE_PREPARE_SECONDS,
+    endsAt: base + CAT_RACE_PREPARE_SECONDS + CAT_RACE_RUN_SECONDS,
+    winnerCat,
+    totalBets,
+    playerBets,
+    previousRaceId: raceId - 1,
+    previousWinnerCat,
+    previousPlayerBets,
+    previousClaimed: false,
+    leaderboard: [
+      { rank: 1, address: "0x91aA11111111111111111111111111111111BEEF", won: "42.75" },
+      { rank: 2, address: "0x72bB22222222222222222222222222222222CAFE", won: "31.5" },
+      { rank: 3, address: "0x83cC33333333333333333333333333333333F00D", won: "18.25" },
+      { rank: 4, address: "0x64dD44444444444444444444444444444444D00D", won: "12.1" },
+    ],
+  };
+}
+
 function catMotion(cat: number, progress: number, winnerCat: number, phase: CatRacePhase, now: number) {
   if (phase === "prepare") {
-    return { position: 0, speed: 0, bob: 0, event: "" };
+    return { position: 11, speed: 0, bob: 0 };
   }
   const winner = cat === winnerCat;
   const seed = (cat + 1) * 17;
-  const wave = Math.sin((progress * 16 + seed + now * 0.08)) * 2.8;
-  const eventSlot = Math.floor(progress * 5);
-  const affected = eventSlot >= 1 && (cat + eventSlot) % 3 === 0;
-  const boosted = eventSlot >= 3 && (cat + eventSlot) % 4 === 1;
-  const eventDelta = affected ? -11 : boosted ? 9 : 0;
-  const cap = winner ? 100 : 86 + ((cat * 7) % 10);
-  const finishBoost = winner ? Math.pow(progress, 3) * 16 : -Math.pow(progress, 2) * (cat + 2);
-  const position = Math.min(Math.max(progress * 86 + wave + eventDelta * 0.55 + finishBoost, 0), cap);
-  const speed = Math.max(Math.round(28 + progress * 14 + wave * 1.8 + eventDelta + (winner ? progress * 10 : 0)), 6);
-  const event = affected ? (eventSlot === 1 ? "stone" : eventSlot === 2 ? "branch" : "bark") : boosted ? "boost" : "";
-  return { position, speed, bob: Math.sin(now * 0.012 + cat) * 4, event };
+  const wave = Math.sin(progress * 18 + seed + now * 0.01) * 3.2;
+  const drift = Math.sin(progress * 9 + seed * 0.4) * 2.1;
+  const fieldPosition = 18 + progress * 48 + wave + drift;
+  const lateSprint = Math.min(Math.max((progress - 0.9) / 0.1, 0), 1);
+  const finishPosition = winner ? 95 : 75 + ((cat * 4 + 3) % 13);
+  const finalPush = winner
+    ? Math.pow(lateSprint, 3) * 27
+    : -Math.pow(lateSprint, 2) * (5 + ((cat + 1) % 4) * 2);
+  const rawPosition = fieldPosition + finalPush;
+  const position = progress >= 0.985 ? finishPosition : Math.min(Math.max(rawPosition, 11), finishPosition);
+  const runPulse = Math.sin(now * 0.018 + cat * 1.7) * 4;
+  const speed = Math.max(Math.round(38 + progress * 18 + wave * 1.2 + runPulse + (winner ? lateSprint * 18 : 0)), 14);
+  return { position, speed, bob: Math.sin(now * 0.012 + cat) * 4 };
 }
 
 function moveLabel(game: GameId, move: number) {

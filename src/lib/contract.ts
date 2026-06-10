@@ -18,6 +18,7 @@ export const PLAYGROUND_ABI = [
   "function catRaceLeaderboardInfo() view returns (address[10] players, uint256[10] wonTotals)",
   "function catRacePlayerBets(uint256 raceId, address player, uint8 cat) view returns (uint256)",
   "function catRaceClaimed(uint256 raceId, address player) view returns (bool)",
+  "function startCatRace(uint256 raceId) returns (uint8)",
   "function playerBalances(address player) view returns (uint256)",
   "function sessionSpent(bytes32 sessionHash) view returns (uint256)",
   "function trustedRelayers(address relayer) view returns (bool)",
@@ -48,6 +49,7 @@ export const PLAYGROUND_ABI = [
   "event LeaderboardRewardUpdated(uint8 indexed rank, uint256 amount)",
   "event LeaderboardCycleUpdated(uint256 duration)",
   "event CatRaceBetPlaced(uint256 indexed raceId, address indexed player, uint8 indexed cat, uint256 amount)",
+  "event CatRaceStarted(uint256 indexed raceId, uint8 indexed winnerCat)",
   "event CatRaceSettled(uint256 indexed raceId, address indexed player, uint8 indexed winnerCat, uint256 payout)"
 ];
 

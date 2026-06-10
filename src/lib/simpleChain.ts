@@ -3,6 +3,7 @@ export const SIMPLE_CHAIN_HEX = `0x${SIMPLE_CHAIN_ID.toString(16)}`;
 export const SIMPLE_RPC_URL = import.meta.env.VITE_SIMPLE_RPC_URL ?? "https://rpc-c.simplechain.com";
 export const GAME_CONTRACT_ADDRESS = import.meta.env.VITE_GAME_CONTRACT_ADDRESS ?? "";
 export const RELAYER_URL = import.meta.env.VITE_RELAYER_URL ?? "http://localhost:8787";
+export const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
 
 export const SIMPLE_CHAIN_PARAMS = {
   chainId: SIMPLE_CHAIN_HEX,

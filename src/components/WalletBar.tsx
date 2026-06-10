@@ -1,4 +1,4 @@
-import { CircleDollarSign, LogOut, PlugZap, RefreshCcw, Settings, Wallet } from "lucide-react";
+import { CircleDollarSign, LogOut, PlugZap, RefreshCcw, Settings, ShieldAlert, Wallet } from "lucide-react";
 import { WalletState } from "../lib/wallet";
 import { GAME_CONTRACT_ADDRESS, SIMPLE_CHAIN_ID, shortAddress } from "../lib/simpleChain";
 
@@ -22,25 +22,31 @@ export function WalletBar({ wallet, isAdmin, onConnect, onDisconnect, onRefresh,
         <span>Simple Chain</span>
         <strong>SRW</strong>
       </div>
-      <div className="topbar-actions">
-        {isAdmin && (
-          <button className="icon-button" onClick={onAdmin} title="Admin settings" type="button">
-            <Settings size={18} />
+      <div className="topbar-actions-shell">
+        <div className="topbar-actions">
+          {isAdmin && (
+            <button className="icon-button" onClick={onAdmin} title="Admin settings" type="button">
+              <Settings size={18} />
+            </button>
+          )}
+          <button className="icon-button" disabled={!connected || busy} onClick={onRefresh} title="Refresh wallet" type="button">
+            <RefreshCcw size={18} />
           </button>
-        )}
-        <button className="icon-button" disabled={!connected || busy} onClick={onRefresh} title="Refresh wallet" type="button">
-          <RefreshCcw size={18} />
-        </button>
-        {connected && (
-          <button className="icon-button icon-button--danger" disabled={busy} onClick={onDisconnect} title="Log out wallet" type="button">
-            <LogOut size={18} />
+          {connected && (
+            <button className="icon-button icon-button--danger" disabled={busy} onClick={onDisconnect} title="Log out wallet" type="button">
+              <LogOut size={18} />
+            </button>
+          )}
+          <button className="wallet-button" disabled={busy} onClick={onConnect} type="button">
+            {connected ? <Wallet size={18} /> : <PlugZap size={18} />}
+            <span>{connected ? shortAddress(wallet.address) : "Connect Wallet"}</span>
+            {connected && <b>{Number(wallet.balance).toFixed(3)} SRW</b>}
           </button>
-        )}
-        <button className="wallet-button" disabled={busy} onClick={onConnect} type="button">
-          {connected ? <Wallet size={18} /> : <PlugZap size={18} />}
-          <span>{connected ? shortAddress(wallet.address) : "Connect Wallet"}</span>
-          {connected && <b>{Number(wallet.balance).toFixed(3)} SRW</b>}
-        </button>
+        </div>
+        <div className="wallet-safety-warning">
+          <ShieldAlert size={16} />
+          <span>Do not use your main wallet. Use a separate play wallet with limited SRW.</span>
+        </div>
       </div>
       <div className="config-strip">
         <span>Chain ID {SIMPLE_CHAIN_ID}</span>
