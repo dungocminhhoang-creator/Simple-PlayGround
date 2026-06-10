@@ -9,7 +9,8 @@ export const PLAYGROUND_ABI = [
   "function owner() view returns (address)",
   "function poolLiquidity() view returns (uint256)",
   "function currentLeaderboardEpoch() view returns (uint256)",
-  "function LEADERBOARD_EPOCH_DURATION() view returns (uint256)",
+  "function leaderboardEpochDuration() view returns (uint256)",
+  "function leaderboardRewardsInfo() view returns (uint256[10] rewards)",
   "function leaderboardEpochInfo(uint256 epoch) view returns (address[10] players, int256[10] scores, uint256[10] playCounts, uint256 startedAt, uint256 endsAt, bool rewardsSettled)",
   "function playerBalances(address player) view returns (uint256)",
   "function sessionSpent(bytes32 sessionHash) view returns (uint256)",
@@ -26,6 +27,8 @@ export const PLAYGROUND_ABI = [
   "function depositPool() payable",
   "function withdrawPool(uint256 amount, address payable to)",
   "function settleLeaderboardRewards(uint256 epoch)",
+  "function setLeaderboardRewards(uint256[10] rewards)",
+  "function setLeaderboardCycleDays(uint16 cycleDays)",
   "event TrustedRelayerUpdated(address indexed relayer, bool trusted)",
   "event ServerSeedCommitted(bytes32 indexed serverSeedHash, address indexed relayer)",
   "event ServerSeedRevealed(bytes32 indexed serverSeedHash, bytes32 indexed nextServerSeedHash, address indexed relayer)",
@@ -33,7 +36,9 @@ export const PLAYGROUND_ABI = [
   "event RoundRandomness(uint256 indexed roundId, bytes32 indexed playerSeed, bytes32 indexed serverSeedHash)",
   "event LeaderboardUpdated(uint256 indexed epoch, address indexed player, int256 netProfit)",
   "event LeaderboardRewardPaid(uint256 indexed epoch, uint8 rank, address indexed player, uint256 amount)",
-  "event LeaderboardRewardsSettled(uint256 indexed epoch, uint256 totalRewards)"
+  "event LeaderboardRewardsSettled(uint256 indexed epoch, uint256 totalRewards)",
+  "event LeaderboardRewardUpdated(uint8 indexed rank, uint256 amount)",
+  "event LeaderboardCycleUpdated(uint256 duration)"
 ];
 
 export function getPlaygroundContract(provider: BrowserProvider) {

@@ -20,6 +20,8 @@ type SettingsState = {
   maxBet: string;
   poolBalance: string;
   owner: string;
+  leaderboardCycleDays: number;
+  leaderboardRewards: string[];
 };
 type AccountState = {
   gameBalance: string;
@@ -67,6 +69,8 @@ type LeaderboardState = {
   endsAt: number;
   settled: boolean;
   rows: LeaderboardRow[];
+  rewards: string[];
+  cycleDays: number;
   previousEpoch: number;
   previousSettled: boolean;
   previousRows: LeaderboardRow[];
@@ -79,7 +83,8 @@ const AUTO_SESSION_DURATION_SECONDS = 30 * 24 * 60 * 60;
 const emptyWallet: WalletState = { provider: null, address: "", balance: "0", chainId: "" };
 const emptyAccount: AccountState = { gameBalance: "0", sessionSpent: "0" };
 const emptyHealth: RelayerHealth = { ok: false, contractAddress: "", relayerAddress: "", trusted: false, currentSeedHash: "", seedCommitted: false };
-const emptyLeaderboard: LeaderboardState = { epoch: 0, startedAt: 0, endsAt: 0, settled: false, rows: [], previousEpoch: 0, previousSettled: true, previousRows: [] };
+const defaultLeaderboardRewards = ["3", "2", "2", "1", "1", "1", "1", "1", "1", "1"];
+const emptyLeaderboard: LeaderboardState = { epoch: 0, startedAt: 0, endsAt: 0, settled: false, rows: [], rewards: defaultLeaderboardRewards, cycleDays: 5, previousEpoch: 0, previousSettled: true, previousRows: [] };
 
 const initialSettings: SettingsState = {
   entryFeeBps: 500,
@@ -88,6 +93,8 @@ const initialSettings: SettingsState = {
   maxBet: "100",
   poolBalance: "0",
   owner: "",
+  leaderboardCycleDays: 5,
+  leaderboardRewards: defaultLeaderboardRewards,
 };
 
 const games = [
@@ -269,13 +276,15 @@ export function App() {
 
     try {
       const contract = getPlaygroundContract(activeProvider);
-      const [entryFeeBps, winFeeBps, minBet, maxBet, owner, poolBalance] = await Promise.all([
+      const [entryFeeBps, winFeeBps, minBet, maxBet, owner, poolBalance, leaderboardEpochDuration, leaderboardRewards] = await Promise.all([
         contract.entryFeeBps(),
         contract.winFeeBps(),
         contract.minBet(),
         contract.maxBet(),
         contract.owner(),
         contract.poolLiquidity(),
+        contract.leaderboardEpochDuration(),
+        contract.leaderboardRewardsInfo(),
       ]);
 
       setSettings({
@@ -285,6 +294,8 @@ export function App() {
         maxBet: formatEther(maxBet),
         owner,
         poolBalance: formatEther(poolBalance),
+        leaderboardCycleDays: Math.max(Math.round(Number(leaderboardEpochDuration) / 86400), 1),
+        leaderboardRewards: Array.from(leaderboardRewards as readonly bigint[]).map((reward) => formatEther(reward)),
       });
     } catch (error) {
       setStatus({ tone: "warn", message: `Could not load contract settings: ${getErrorMessage(error)}` });
@@ -298,23 +309,33 @@ export function App() {
 
     try {
       const contract = getPlaygroundContract(activeProvider);
-      const epoch = Number(await contract.currentLeaderboardEpoch());
+      const [epochRaw, rewardAmounts] = await Promise.all([
+        contract.currentLeaderboardEpoch(),
+        contract.leaderboardRewardsInfo(),
+      ]);
+      const epoch = Number(epochRaw);
+      const rewards = Array.from(rewardAmounts as readonly bigint[]).map((reward) => formatEther(reward));
       const [players, scores, playCounts, startedAt, endsAt, settled] = await contract.leaderboardEpochInfo(BigInt(epoch));
       let previousRows: LeaderboardRow[] = [];
       let previousSettled = true;
 
       if (epoch > 1) {
         const [previousPlayers, previousScores, previousPlayCounts, , , previousRewardsSettled] = await contract.leaderboardEpochInfo(BigInt(epoch - 1));
-        previousRows = buildLeaderboardRows(previousPlayers, previousScores, previousPlayCounts);
+        previousRows = buildLeaderboardRows(previousPlayers, previousScores, previousPlayCounts, rewards);
         previousSettled = Boolean(previousRewardsSettled);
       }
 
+      const started = Number(startedAt);
+      const ends = Number(endsAt);
+
       setLeaderboard({
         epoch,
-        startedAt: Number(startedAt),
-        endsAt: Number(endsAt),
+        startedAt: started,
+        endsAt: ends,
         settled: Boolean(settled),
-        rows: buildLeaderboardRows(players, scores, playCounts),
+        rows: buildLeaderboardRows(players, scores, playCounts, rewards),
+        rewards,
+        cycleDays: Math.max(Math.round((ends - started) / 86400), 1),
         previousEpoch: epoch > 1 ? epoch - 1 : 0,
         previousSettled,
         previousRows,
@@ -740,7 +761,7 @@ function LeaderboardPage({
         <div className="countdown-panel">
           <div className="countdown-head">
             <span>Next reset</span>
-            <strong>5-day cycle</strong>
+            <strong>{leaderboard.cycleDays || "-"}-day cycle</strong>
           </div>
           <div className="countdown-grid">
             <TimeBox value={leaderboard.endsAt ? countdown.days : "--"} label="Days" />
@@ -748,8 +769,15 @@ function LeaderboardPage({
             <TimeBox value={leaderboard.endsAt ? countdown.minutes : "--"} label="Minutes" />
             <TimeBox value={leaderboard.endsAt ? countdown.seconds : "--"} label="Seconds" />
           </div>
+          <div className="progress-meta">
+            <span>Start {leaderboard.startedAt ? formatDateTime(leaderboard.startedAt) : "--"}</span>
+            <span>End {leaderboard.endsAt ? formatDateTime(leaderboard.endsAt) : "--"}</span>
+          </div>
           <div className="progress-track">
             <span style={{ width: `${Math.min(Math.max(progress, 0), 100)}%` }} />
+            {leaderboard.cycleDays > 1 && Array.from({ length: leaderboard.cycleDays - 1 }).map((_, index) => (
+              <i key={index} style={{ left: `${((index + 1) / leaderboard.cycleDays) * 100}%` }} />
+            ))}
           </div>
         </div>
 
@@ -760,9 +788,9 @@ function LeaderboardPage({
         <div className="receipt">
           <ReceiptText size={18} />
           <dl>
-            <div><dt>Top 1</dt><dd>3 SRW</dd></div>
-            <div><dt>Top 2-3</dt><dd>2 SRW</dd></div>
-            <div><dt>Top 4-10</dt><dd>1 SRW</dd></div>
+            {leaderboard.rewards.map((reward, index) => (
+              <div key={index}><dt>Top {index + 1}</dt><dd>{safeAmount(Number(reward))} SRW</dd></div>
+            ))}
           </dl>
         </div>
         <div className="criteria-note">
@@ -1220,14 +1248,18 @@ function AdminPage({
   const [winFee, setWinFee] = useState(String(settings.winFeeBps / 100));
   const [deposit, setDeposit] = useState("10");
   const [withdraw, setWithdraw] = useState("1");
+  const [cycleDays, setCycleDays] = useState(String(settings.leaderboardCycleDays));
+  const [leaderboardRewards, setLeaderboardRewards] = useState<string[]>(settings.leaderboardRewards);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setEntryFee(String(settings.entryFeeBps / 100));
     setWinFee(String(settings.winFeeBps / 100));
-  }, [settings.entryFeeBps, settings.winFeeBps]);
+    setCycleDays(String(settings.leaderboardCycleDays));
+    setLeaderboardRewards(settings.leaderboardRewards);
+  }, [settings.entryFeeBps, settings.winFeeBps, settings.leaderboardCycleDays, settings.leaderboardRewards]);
 
-  async function runAdmin(action: "fees" | "deposit" | "withdraw" | "trustRelayer") {
+  async function runAdmin(action: "fees" | "deposit" | "withdraw" | "trustRelayer" | "leaderboardRewards" | "leaderboardCycle") {
     if (!contractReady || !provider) {
       setStatus({ tone: "warn", message: "Connect a wallet and configure the game contract first." });
       return;
@@ -1244,6 +1276,10 @@ function AdminPage({
             ? await contract.depositPool({ value: parseEther(deposit || "0") })
             : action === "trustRelayer"
               ? await contract.setTrustedRelayer(relayerHealth.relayerAddress, true)
+              : action === "leaderboardRewards"
+                ? await contract.setLeaderboardRewards(leaderboardRewards.map((reward) => parseEther(reward || "0")))
+                : action === "leaderboardCycle"
+                  ? await contract.setLeaderboardCycleDays(Math.round(Number(cycleDays || "0")))
               : await contract.withdrawPool(parseEther(withdraw || "0"), walletAddress);
 
       setStatus({ tone: "info", message: `Admin transaction ${shortAddress(tx.hash)} is waiting for confirmation...` });
@@ -1291,6 +1327,40 @@ function AdminPage({
         {isAdmin && (
           <div className="admin-grid">
             <label className="number-field">
+              <span>Leaderboard cycle days</span>
+              <input value={cycleDays} onChange={(event) => setCycleDays(event.target.value)} />
+            </label>
+            <button className="secondary-action" disabled={busy} onClick={() => runAdmin("leaderboardCycle")} type="button">
+              Save Cycle
+            </button>
+          </div>
+        )}
+        {isAdmin && (
+          <div className="admin-reward-panel">
+            <span className="field-label">Leaderboard rewards</span>
+            <div className="admin-grid admin-grid--rewards">
+              {leaderboardRewards.map((reward, index) => (
+                <label className="number-field" key={index}>
+                  <span>Top {index + 1} reward SRW</span>
+                  <input
+                    value={reward}
+                    onChange={(event) => {
+                      const next = [...leaderboardRewards];
+                      next[index] = event.target.value;
+                      setLeaderboardRewards(next);
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+            <button className="secondary-action" disabled={busy} onClick={() => runAdmin("leaderboardRewards")} type="button">
+              Save Rewards
+            </button>
+          </div>
+        )}
+        {isAdmin && (
+          <div className="admin-grid">
+            <label className="number-field">
               <span>Deposit SRW</span>
               <input value={deposit} onChange={(event) => setDeposit(event.target.value)} />
             </label>
@@ -1322,6 +1392,7 @@ function AdminPage({
             <div><dt>Relayer trust</dt><dd>{relayerHealth.trusted ? "Trusted" : "Not trusted"}</dd></div>
             <div><dt>Seed status</dt><dd>{relayerHealth.seedCommitted ? "Committed" : "Pending"}</dd></div>
             <div><dt>Permission</dt><dd>{isAdmin ? "Admin" : "Read only"}</dd></div>
+            <div><dt>Leaderboard cycle</dt><dd>{settings.leaderboardCycleDays} days</dd></div>
             <div><dt>Pool liquidity</dt><dd>{Number(settings.poolBalance).toFixed(4)} SRW</dd></div>
           </dl>
         </div>
@@ -1367,25 +1438,19 @@ function historyStorageKey(address: string) {
   return `${HISTORY_STORAGE_PREFIX}:${GAME_CONTRACT_ADDRESS}:${address.toLowerCase()}`;
 }
 
-function buildLeaderboardRows(players: readonly string[], scores: readonly bigint[], playCounts: readonly bigint[]): LeaderboardRow[] {
+function buildLeaderboardRows(players: readonly string[], scores: readonly bigint[], playCounts: readonly bigint[], rewards: readonly string[]): LeaderboardRow[] {
   return players
     .map((address, index) => ({
       rank: index + 1,
       address,
       won: formatEther(scores[index] ?? 0n),
-      reward: leaderboardRewardLabel(index + 1),
+      reward: `${safeAmount(Number(rewards[index] ?? "0"))} SRW`,
       playCount: Number(playCounts[index] ?? 0n),
       eligible: Number(playCounts[index] ?? 0n) >= 100,
       rawScore: scores[index] ?? 0n,
     }))
     .filter((row) => row.address && row.address !== "0x0000000000000000000000000000000000000000" && row.rawScore > 0n)
     .map(({ rawScore, ...row }) => row);
-}
-
-function leaderboardRewardLabel(rank: number) {
-  if (rank === 1) return "3 SRW";
-  if (rank <= 3) return "2 SRW";
-  return "1 SRW";
 }
 
 function moveLabel(game: GameId, move: number) {
@@ -1477,6 +1542,15 @@ function splitCountdown(totalSeconds: number) {
 
 function padTime(value: number) {
   return String(value).padStart(2, "0");
+}
+
+function formatDateTime(timestamp: number) {
+  return new Date(timestamp * 1000).toLocaleString(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function getErrorMessage(error: unknown) {

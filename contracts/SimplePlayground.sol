@@ -51,12 +51,8 @@ contract SimplePlayground {
     uint256 public nextRoundId = 1;
     uint256 public totalPlayerBalances;
     uint256 public immutable leaderboardGenesis;
-
-    uint256 public constant LEADERBOARD_EPOCH_DURATION = 5 days;
+    uint256 public leaderboardEpochDuration = 5 days;
     uint256 public constant MIN_LEADERBOARD_GAMES = 100;
-    uint256 public constant TOP_ONE_REWARD = 3 ether;
-    uint256 public constant TOP_TWO_THREE_REWARD = 2 ether;
-    uint256 public constant TOP_FOUR_TEN_REWARD = 1 ether;
 
     bytes32 public immutable DOMAIN_SEPARATOR;
 
@@ -72,6 +68,7 @@ contract SimplePlayground {
     mapping(uint256 => mapping(address => uint256)) public epochPlayCount;
     mapping(uint256 => address[10]) private epochTopPlayers;
     mapping(uint256 => bool) public epochRewardsSettled;
+    uint256[10] private leaderboardRewardAmounts;
 
     event OwnerChanged(address indexed previousOwner, address indexed nextOwner);
     event TrustedRelayerUpdated(address indexed relayer, bool trusted);
@@ -97,6 +94,8 @@ contract SimplePlayground {
     event LeaderboardUpdated(uint256 indexed epoch, address indexed player, int256 netProfit);
     event LeaderboardRewardPaid(uint256 indexed epoch, uint8 rank, address indexed player, uint256 amount);
     event LeaderboardRewardsSettled(uint256 indexed epoch, uint256 totalRewards);
+    event LeaderboardRewardUpdated(uint8 indexed rank, uint256 amount);
+    event LeaderboardCycleUpdated(uint256 duration);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "not owner");
@@ -111,6 +110,12 @@ contract SimplePlayground {
     constructor() {
         owner = msg.sender;
         leaderboardGenesis = block.timestamp;
+        leaderboardRewardAmounts[0] = 3 ether;
+        leaderboardRewardAmounts[1] = 2 ether;
+        leaderboardRewardAmounts[2] = 2 ether;
+        for (uint256 i = 3; i < 10; i++) {
+            leaderboardRewardAmounts[i] = 1 ether;
+        }
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -152,13 +157,19 @@ contract SimplePlayground {
     }
 
     function currentLeaderboardEpoch() public view returns (uint256) {
-        return ((block.timestamp - leaderboardGenesis) / LEADERBOARD_EPOCH_DURATION) + 1;
+        return ((block.timestamp - leaderboardGenesis) / leaderboardEpochDuration) + 1;
     }
 
     function leaderboardEpochBounds(uint256 epoch) public view returns (uint256 startedAt, uint256 endsAt) {
         require(epoch > 0, "zero epoch");
-        startedAt = leaderboardGenesis + ((epoch - 1) * LEADERBOARD_EPOCH_DURATION);
-        endsAt = startedAt + LEADERBOARD_EPOCH_DURATION;
+        startedAt = leaderboardGenesis + ((epoch - 1) * leaderboardEpochDuration);
+        endsAt = startedAt + leaderboardEpochDuration;
+    }
+
+    function leaderboardRewardsInfo() external view returns (uint256[10] memory rewards) {
+        for (uint256 i = 0; i < 10; i++) {
+            rewards[i] = leaderboardRewardAmounts[i];
+        }
     }
 
     function leaderboardEpochInfo(uint256 epoch)
@@ -212,6 +223,19 @@ contract SimplePlayground {
         }
 
         emit LeaderboardRewardsSettled(epoch, totalRewards);
+    }
+
+    function setLeaderboardRewards(uint256[10] calldata rewards) external onlyOwner {
+        for (uint8 i = 0; i < 10; i++) {
+            leaderboardRewardAmounts[i] = rewards[i];
+            emit LeaderboardRewardUpdated(i + 1, rewards[i]);
+        }
+    }
+
+    function setLeaderboardCycleDays(uint16 cycleDays) external onlyOwner {
+        require(cycleDays > 0 && cycleDays <= 365, "invalid cycle");
+        leaderboardEpochDuration = uint256(cycleDays) * 1 days;
+        emit LeaderboardCycleUpdated(leaderboardEpochDuration);
     }
 
     function transferOwnership(address nextOwner) external onlyOwner {
@@ -481,14 +505,8 @@ contract SimplePlayground {
         return player != address(0) && epochNetProfit[epoch][player] > 0 && epochPlayCount[epoch][player] >= MIN_LEADERBOARD_GAMES;
     }
 
-    function _leaderboardReward(uint8 index) private pure returns (uint256) {
-        if (index == 0) {
-            return TOP_ONE_REWARD;
-        }
-        if (index < 3) {
-            return TOP_TWO_THREE_REWARD;
-        }
-        return TOP_FOUR_TEN_REWARD;
+    function _leaderboardReward(uint8 index) private view returns (uint256) {
+        return leaderboardRewardAmounts[index];
     }
 
     function _calculatePayout(uint256 betAmount, Result result) private view returns (uint256 payout, uint256 entryFee, uint256 winFee) {
