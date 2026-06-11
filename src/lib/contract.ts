@@ -38,6 +38,7 @@ export const PLAYGROUND_ABI = [
   "function setLeaderboardCycleDays(uint16 cycleDays)",
   "function placeCatRaceBet(uint8 cat, uint256 betAmount) returns (uint256)",
   "function settleCatRaceBet(uint256 raceId) returns (uint256)",
+  "function settleCatRaceBetFor(uint256 raceId, address player) returns (uint256)",
   "event TrustedRelayerUpdated(address indexed relayer, bool trusted)",
   "event ServerSeedCommitted(bytes32 indexed serverSeedHash, address indexed relayer)",
   "event ServerSeedRevealed(bytes32 indexed serverSeedHash, bytes32 indexed nextServerSeedHash, address indexed relayer)",

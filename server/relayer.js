@@ -22,8 +22,10 @@ const ABI = [
   "function commitServerSeed(bytes32 serverSeedHash)",
   "function playRelayed((address player,uint8 gameType,uint8 playerMove,uint256 betAmount,bytes32 playerSeed,uint256 sessionAllowance,uint64 sessionExpiresAt,uint256 sessionNonce,bytes sessionSignature,bytes32 serverSeed,bytes32 nextServerSeedHash) play) returns (uint256)",
   "function startCatRace(uint256 raceId) returns (uint8)",
+  "function settleCatRaceBetFor(uint256 raceId, address player) returns (uint256)",
   "function catRaceRoundInfo(uint256 raceId) view returns (tuple(uint256 raceId,uint8 phase,uint256 startedAt,uint256 bettingEndsAt,uint256 endsAt,uint8 winnerCat,uint256[5] totalBets))",
   "event CatRaceStarted(uint256 indexed raceId, uint8 indexed winnerCat)",
+  "event CatRaceSettled(uint256 indexed raceId, address indexed player, uint8 indexed winnerCat, uint256 payout)",
   "event RoundSettled(uint256 indexed roundId, address indexed player, uint8 gameType, uint256 betAmount, uint8 playerMove, uint8 outcome, uint8 result, uint256 payout)",
   "event RoundRandomness(uint256 indexed roundId, bytes32 indexed playerSeed, bytes32 indexed serverSeedHash)",
 ];
@@ -130,6 +132,27 @@ function parseRound(contract, receipt) {
   }
   if (!round) throw new Error("RoundSettled event not found");
   return { ...round, ...randomness };
+}
+
+function parseCatRaceSettlement(contract, receipt) {
+  for (const logEntry of receipt.logs) {
+    try {
+      const parsed = contract.interface.parseLog(logEntry);
+      if (parsed?.name === "CatRaceSettled") {
+        return {
+          raceId: parsed.args.raceId.toString(),
+          player: parsed.args.player,
+          winnerCat: Number(parsed.args.winnerCat),
+          payout: formatEther(parsed.args.payout),
+          txHash: receipt.hash,
+          blockNumber: receipt.blockNumber,
+        };
+      }
+    } catch {
+      // Ignore unrelated logs.
+    }
+  }
+  throw new Error("CatRaceSettled event not found");
 }
 
 function validatePlayRequest(body) {
@@ -262,6 +285,33 @@ async function handleCatRaceStart(body) {
   return { raceId: raceId.toString(), winnerCat, txHash: tx.hash };
 }
 
+async function handleCatRaceClaim(body) {
+  if (!contract || !relayer) throw new Error("Relayer server is missing VITE_GAME_CONTRACT_ADDRESS or RELAYER_PRIVATE_KEY");
+  const raceId = BigInt(body?.raceId || 0);
+  const player = String(body?.player || "");
+  if (raceId <= 0n) throw new Error("Missing raceId");
+  if (!/^0x[a-fA-F0-9]{40}$/.test(player)) throw new Error("Missing player");
+
+  log("STEP", `Claiming cat race ${raceId.toString()} for player`, {
+    profileId: player,
+    wallet: relayer.address,
+    step: "cat_race_claim",
+    style: "step",
+  });
+  const tx = await contract.settleCatRaceBetFor(raceId, player);
+  log("INFO", `Cat race claim tx submitted ${tx.hash}`, { profileId: player, wallet: relayer.address, step: "cat_race_claim" });
+  const receipt = await tx.wait();
+  const settlement = parseCatRaceSettlement(contract, receipt);
+  const gameBalance = await contract.playerBalances(player, { blockTag: receipt.blockNumber });
+  log("OK", `Cat race ${raceId.toString()} claimed`, { profileId: player, wallet: relayer.address, step: "cat_race_claim", style: "success" });
+  return {
+    settlement,
+    account: {
+      gameBalance: formatEther(gameBalance),
+    },
+  };
+}
+
 createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     jsonResponse(res, 204, {});
@@ -313,6 +363,13 @@ createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/api/cat-race/start") {
       const body = await readBody(req);
       const result = await handleCatRaceStart(body);
+      jsonResponse(res, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/cat-race/claim") {
+      const body = await readBody(req);
+      const result = await handleCatRaceClaim(body);
       jsonResponse(res, 200, { ok: true, ...result });
       return;
     }

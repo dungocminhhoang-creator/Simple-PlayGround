@@ -323,24 +323,34 @@ contract SimplePlayground {
     }
 
     function settleCatRaceBet(uint256 raceId) external returns (uint256 payout) {
+        return _settleCatRaceBet(raceId, msg.sender);
+    }
+
+    function settleCatRaceBetFor(uint256 raceId, address player) external returns (uint256 payout) {
+        require(msg.sender == player || trustedRelayers[msg.sender], "not authorized");
+        return _settleCatRaceBet(raceId, player);
+    }
+
+    function _settleCatRaceBet(uint256 raceId, address player) private returns (uint256 payout) {
+        require(player != address(0), "zero player");
         require(raceId > 0 && raceId < currentCatRaceId(), "race active");
-        require(!catRaceClaimed[raceId][msg.sender], "already claimed");
-        catRaceClaimed[raceId][msg.sender] = true;
+        require(!catRaceClaimed[raceId][player], "already claimed");
+        catRaceClaimed[raceId][player] = true;
 
         uint8 winnerCat = _ensureCatRaceStarted(raceId);
-        uint256 winningBet = catRacePlayerBets[raceId][msg.sender][winnerCat];
+        uint256 winningBet = catRacePlayerBets[raceId][player][winnerCat];
         if (winningBet > 0) {
             uint256 grossPayout = winningBet * 5;
             uint256 winFee = (grossPayout * winFeeBps) / 10_000;
             payout = grossPayout - winFee;
             require(poolLiquidity() >= payout, "pool too low");
-            playerBalances[msg.sender] += payout;
+            playerBalances[player] += payout;
             totalPlayerBalances += payout;
-            catRaceWonTotals[msg.sender] += payout;
-            _sortCatRaceLeaderboard(msg.sender);
+            catRaceWonTotals[player] += payout;
+            _sortCatRaceLeaderboard(player);
         }
 
-        emit CatRaceSettled(raceId, msg.sender, winnerCat, payout);
+        emit CatRaceSettled(raceId, player, winnerCat, payout);
     }
 
     function transferOwnership(address nextOwner) external onlyOwner {

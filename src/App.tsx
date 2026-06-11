@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Cat, CheckCircle2, ChevronDown, ChevronRight, Coins, Crown, Dice5, Flag, Gauge, Gem, Hand, History, Landmark, Loader2, ReceiptText, Scissors, ShieldCheck, Trophy, WalletCards, X, Zap } from "lucide-react";
 import { AbstractProvider, BrowserProvider, Contract, JsonRpcProvider, formatEther, hexlify, parseEther, randomBytes } from "ethers";
 import { Brand } from "./components/Brand";
@@ -196,6 +196,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [successPopup, setSuccessPopup] = useState<SuccessPopupState>(null);
+  const autoClaimedCatRaces = useRef<Set<string>>(new Set());
   const contractReady = Boolean(GAME_CONTRACT_ADDRESS);
 
   const sessionRemaining = Math.max(Number(relayerSession?.allowance ?? "0") - Number(account.sessionSpent), 0);
@@ -236,6 +237,17 @@ export function App() {
       void startCatRaceViaRelayer(catRace.raceId);
     }
   }, [catRace.phase, catRace.raceId, catRace.winnerCat]);
+
+  useEffect(() => {
+    if (DEMO_MODE || !wallet.address || !relayerReady || busy) return;
+    if (!catRace.previousRaceId || catRace.previousClaimed) return;
+    if (!catRace.previousPlayerBets.some((amount) => Number(amount) > 0)) return;
+
+    const key = `${wallet.address.toLowerCase()}:${catRace.previousRaceId}`;
+    if (autoClaimedCatRaces.current.has(key)) return;
+    autoClaimedCatRaces.current.add(key);
+    void autoClaimCatRaceBet(catRace.previousRaceId);
+  }, [busy, catRace.previousClaimed, catRace.previousPlayerBets, catRace.previousRaceId, relayerReady, wallet.address]);
 
   useEffect(() => {
     if (!DEMO_MODE) return;
@@ -860,6 +872,51 @@ export function App() {
       setStatus({ tone: "error", message: getErrorMessage(error) });
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function autoClaimCatRaceBet(raceId: number) {
+    if (!wallet.address || !raceId) return;
+    try {
+      setStatus({ tone: "info", message: `Auto claiming Cat Race #${raceId} payout...` });
+      const response = await fetch(`${RELAYER_URL}/api/cat-race/claim`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ raceId, player: wallet.address }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || "Cat Race auto claim failed.");
+      }
+
+      const settlement = payload.settlement;
+      const payout = String(settlement?.payout ?? "0");
+      const winnerCat = Number(settlement?.winnerCat ?? catRace.previousWinnerCat);
+      addCatRaceHistoryEntry(wallet.address, {
+        raceId: String(settlement?.raceId ?? raceId),
+        winnerCat,
+        picks: catRace.previousPlayerBets
+          .map((amount, index) => Number(amount) > 0 ? `${catName(index)} ${safeAmount(Number(amount))}` : "")
+          .filter(Boolean)
+          .join(", ") || "-",
+        payout,
+        playedAt: Date.now(),
+      });
+      if (payload.account?.gameBalance !== undefined) {
+        setAccount((current) => ({ ...current, gameBalance: String(payload.account.gameBalance) }));
+      }
+      setSuccessPopup({
+        title: Number(payout) > 0 ? "Cat Race payout" : "Race settled",
+        amount: `${safeAmount(Number(payout))} SRW`,
+        detail: `${catName(winnerCat)} crossed the finish line.`,
+      });
+      setStatus({ tone: Number(payout) > 0 ? "ok" : "info", message: `Cat Race #${raceId} auto claimed.` });
+      await Promise.all([
+        wallet.provider ? loadAccount(wallet.provider, wallet.address, relayerSession) : Promise.resolve(),
+        loadCatRace(publicProvider, wallet.address),
+      ]);
+    } catch (error) {
+      setStatus({ tone: "warn", message: `Auto claim unavailable. Use Claim fallback. ${getErrorMessage(error)}` });
     }
   }
 
