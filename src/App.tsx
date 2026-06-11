@@ -534,7 +534,7 @@ export function App() {
     if (!contractReady || !address) return;
 
     try {
-      const contract = getPlaygroundContract(provider);
+      const contract = getPlaygroundContract(publicProvider);
       const gameBalance = await contract.playerBalances(address);
       let sessionSpent = 0n;
 
