@@ -414,7 +414,7 @@ contract SimplePlayground {
     }
 
     function depositPool() external payable onlyOwner {
-        require(amount > 0, "zero deposit");
+        require(msg.value > 0, "zero deposit");
         emit PoolDeposited(msg.sender, msg.value);
     }
 
@@ -436,7 +436,7 @@ contract SimplePlayground {
 
     function _depositPlayerFor(address player, uint256 amount) private {
         require(player != address(0), "zero player");
-        require(msg.value > 0, "zero deposit");
+        require(amount > 0, "zero deposit");
         playerBalances[player] += amount;
         totalPlayerBalances += amount;
         emit PlayerDeposited(player, amount, playerBalances[player]);
