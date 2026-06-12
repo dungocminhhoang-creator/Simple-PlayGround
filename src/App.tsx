@@ -8,7 +8,7 @@ import { DEMO_MODE, GAME_CONTRACT_ADDRESS, RELAYER_URL, SIMPLE_CHAIN_ID, SIMPLE_
 import { PLAYGROUND_ABI, getPlaygroundContract } from "./lib/contract";
 import { WalletState, connectWallet, getAuthorizedWallet, getInjectedProvider } from "./lib/wallet";
 
-type Page = "lobby" | "leaderboard" | "rps" | "coin" | "cat" | "admin";
+type Page = "lobby" | "leaderboard" | "rps" | "coin" | "cat" | "faucet" | "admin";
 type GameId = "coin" | "rps";
 type TxStatus = { tone: "info" | "ok" | "warn" | "error"; message: string };
 type SuccessPopupState = { title: string; amount: string; detail: string } | null;
@@ -177,7 +177,7 @@ const games = [
   },
 ];
 
-const restorablePages: Page[] = ["lobby", "leaderboard", "rps", "coin", "cat", "admin"];
+const restorablePages: Page[] = ["lobby", "leaderboard", "rps", "coin", "cat", "faucet", "admin"];
 
 function readStoredPage(): Page {
   const stored = localStorage.getItem(PAGE_STORAGE_KEY);
@@ -1062,6 +1062,9 @@ export function App() {
           <button className={page === "cat" ? "nav-item nav-item--active" : "nav-item"} onClick={() => setPage("cat")} type="button">
             <Cat size={18} /> Cat Race
           </button>
+          <button className={page === "faucet" ? "nav-item nav-item--active" : "nav-item"} onClick={() => setPage("faucet")} type="button">
+            <Gift size={18} /> Faucet
+          </button>
           {isAdmin && (
             <button className={page === "admin" ? "nav-item nav-item--active" : "nav-item"} onClick={() => setPage("admin")} type="button">
               <Landmark size={18} /> Pool Admin
@@ -1077,6 +1080,10 @@ export function App() {
           <span>Your Game Balance</span>
           <strong>{Number(account.gameBalance).toFixed(4)} SRW</strong>
           <small>{sessionReady ? "Quick play ready" : relayerReady ? "Quick play available" : "Wallet play fallback ready"}</small>
+          <button className="balance-faucet-link" onClick={() => setPage("faucet")} type="button">
+            <Gift size={15} />
+            Need SRW? Open Faucet
+          </button>
           <div className="game-balance-address">
             <div>
               <span>Player address</span>
@@ -1102,7 +1109,6 @@ export function App() {
             busy={busy}
             playing={playing}
             onDeposit={depositPlayer}
-            onFaucet={claimFaucet}
             onPlay={(choice, bet) => playGame("rps", choice, bet)}
             onWithdraw={withdrawPlayer}
             relayerHealth={relayerHealth}
@@ -1119,7 +1125,6 @@ export function App() {
             busy={busy}
             playing={playing}
             onDeposit={depositPlayer}
-            onFaucet={claimFaucet}
             onPlay={(choice, bet) => playGame("coin", choice, bet)}
             onWithdraw={withdrawPlayer}
             relayerHealth={relayerHealth}
@@ -1140,11 +1145,21 @@ export function App() {
             onBet={placeCatRaceBet}
             onClaim={settleCatRaceBet}
             onDeposit={depositPlayer}
-            onFaucet={claimFaucet}
             onWithdraw={withdrawPlayer}
             relayerHealth={relayerHealth}
             sessionReady={sessionReady}
             settings={settings}
+          />
+        )}
+        {page === "faucet" && (
+          <FaucetPage
+            account={account}
+            busy={busy}
+            now={now}
+            onFaucet={claimFaucet}
+            relayerHealth={relayerHealth}
+            settings={settings}
+            walletAddress={wallet.address}
           />
         )}
         {page === "admin" && (
@@ -1352,7 +1367,6 @@ type GamePageProps = {
   busy: boolean;
   playing: boolean;
   onDeposit: (amount: string) => void;
-  onFaucet: () => void;
   onPlay: (choice: number, bet: string) => void;
   onWithdraw: (amount: string) => void;
   relayerHealth: RelayerHealth;
@@ -1432,7 +1446,6 @@ function GameSurface({
   choices,
   history,
   onDeposit,
-  onFaucet,
   onPlay,
   onWithdraw,
   relayerHealth,
@@ -1505,7 +1518,6 @@ function GameSurface({
           busy={busy}
           depositAmount={depositAmount}
           onDeposit={onDeposit}
-          onFaucet={onFaucet}
           onWithdraw={onWithdraw}
           relayerHealth={relayerHealth}
           sessionReady={sessionReady}
@@ -1543,7 +1555,6 @@ function AccountPanel({
   busy,
   depositAmount,
   onDeposit,
-  onFaucet,
   onWithdraw,
   relayerHealth,
   sessionReady,
@@ -1556,7 +1567,6 @@ function AccountPanel({
   busy: boolean;
   depositAmount: string;
   onDeposit: (amount: string) => void;
-  onFaucet: () => void;
   onWithdraw: (amount: string) => void;
   relayerHealth: RelayerHealth;
   sessionReady: boolean;
@@ -1565,10 +1575,6 @@ function AccountPanel({
   settings: SettingsState;
   withdrawAmount: string;
 }) {
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const faucetRemaining = Math.max((account.faucetNextClaimAt || 0) - nowSeconds, 0);
-  const faucetReady = account.faucetAvailable || faucetRemaining === 0;
-  const faucetLabel = faucetReady ? `Faucet ${safeAmount(Number(settings.faucetAmount))} SRW` : `Faucet in ${formatDuration(faucetRemaining)}`;
   const withdrawTooSmall = Number(withdrawAmount || "0") > 0 && Number(withdrawAmount || "0") < Number(settings.minWithdrawAmount);
 
   return (
@@ -1578,11 +1584,6 @@ function AccountPanel({
         <strong>{Number(account.gameBalance).toFixed(4)} SRW</strong>
         <span>Game balance</span>
       </div>
-      <button className={faucetReady ? "faucet-action faucet-action--ready" : "faucet-action"} disabled={busy || !relayerHealth.ok || !faucetReady} onClick={onFaucet} type="button">
-        <Gift size={17} />
-        <span>{faucetLabel}</span>
-      </button>
-      <small className="account-note">Faucet goes to game balance. One wallet per 24h and one IP once.</small>
       <div className="mini-form">
         <input value={depositAmount} onChange={(event) => setDepositAmount(event.target.value)} />
         <button className="secondary-action" disabled={busy} onClick={() => onDeposit(depositAmount)} type="button">Deposit</button>
@@ -1603,6 +1604,93 @@ function AccountPanel({
         <span>{sessionReady ? "No tx sign for each round." : relayerHealth.ok && relayerHealth.trusted && relayerHealth.seedCommitted ? "First Play asks for one access signature." : "Wallet fallback is available."}</span>
       </div>
     </div>
+  );
+}
+
+function FaucetPage({
+  account,
+  busy,
+  now,
+  onFaucet,
+  relayerHealth,
+  settings,
+  walletAddress,
+}: {
+  account: AccountState;
+  busy: boolean;
+  now: number;
+  onFaucet: () => void;
+  relayerHealth: RelayerHealth;
+  settings: SettingsState;
+  walletAddress: string;
+}) {
+  const remaining = Math.max((account.faucetNextClaimAt || 0) - now, 0);
+  const countdown = splitCountdown(remaining);
+  const faucetReady = Boolean(walletAddress && (account.faucetAvailable || remaining <= 0));
+  const relayerReady = relayerHealth.ok && relayerHealth.trusted;
+  const canClaim = faucetReady && relayerReady && !busy;
+  const stateText = !walletAddress
+    ? "Connect a play wallet first."
+    : !relayerReady
+      ? "Faucet requires the trusted relayer to be online."
+      : faucetReady
+        ? "Faucet is ready."
+        : "Cooldown active.";
+
+  return (
+    <section className="faucet-page">
+      <div className="section-heading">
+        <div>
+          <span>Game Balance Faucet</span>
+          <h2>Claim SRW</h2>
+        </div>
+        <div className={relayerReady ? "relayer-badge relayer-badge--online" : "relayer-badge relayer-badge--offline"}>
+          <i />
+          {relayerReady ? "Relayer online" : "Relayer offline"}
+        </div>
+      </div>
+
+      <div className={faucetReady ? "faucet-hero faucet-hero--ready" : "faucet-hero"}>
+        <div className="faucet-orb">
+          <Gift size={42} />
+        </div>
+        <div className="faucet-copy">
+          <span>Available faucet</span>
+          <strong>{safeAmount(Number(settings.faucetAmount))} SRW</strong>
+          <p>Funds are added directly to your game balance. One wallet can claim every 24 hours, and each IP can use the faucet once.</p>
+        </div>
+        <div className={remaining <= 10 && !faucetReady ? "faucet-countdown faucet-countdown--urgent" : "faucet-countdown"}>
+          <span>{faucetReady ? "Ready now" : "Next claim in"}</span>
+          <strong>{faucetReady ? "00:00:00" : `${countdown.hours}:${countdown.minutes}:${countdown.seconds}`}</strong>
+        </div>
+      </div>
+
+      <div className="faucet-stats">
+        <div>
+          <span>Game balance</span>
+          <strong>{safeAmount(Number(account.gameBalance))} SRW</strong>
+        </div>
+        <div>
+          <span>Player wallet</span>
+          <strong>{walletAddress ? shortAddress(walletAddress) : "-"}</strong>
+        </div>
+        <div>
+          <span>Minimum withdraw</span>
+          <strong>{safeAmount(Number(settings.minWithdrawAmount))} SRW</strong>
+        </div>
+      </div>
+
+      <div className="faucet-action-panel">
+        <div>
+          <strong>{stateText}</strong>
+          <span>{faucetReady ? "Claim once to add funds into your game balance." : `Cooldown ends at ${account.faucetNextClaimAt ? new Date(account.faucetNextClaimAt * 1000).toLocaleString() : "-"}`}</span>
+        </div>
+        <button className="primary-action" disabled={!canClaim} onClick={onFaucet} type="button">
+          {busy ? <Loader2 className="spin" size={18} /> : <Gift size={18} />}
+          Claim Faucet
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -1715,7 +1803,6 @@ function CatRacePage({
   onBet,
   onClaim,
   onDeposit,
-  onFaucet,
   onWithdraw,
   relayerHealth,
   sessionReady,
@@ -1729,7 +1816,6 @@ function CatRacePage({
   onBet: (cat: number, bet: string) => void;
   onClaim: (raceId: number) => void;
   onDeposit: (amount: string) => void;
-  onFaucet: () => void;
   onWithdraw: (amount: string) => void;
   relayerHealth: RelayerHealth;
   sessionReady: boolean;
@@ -1804,7 +1890,6 @@ function CatRacePage({
           busy={busy}
           depositAmount={depositAmount}
           onDeposit={onDeposit}
-          onFaucet={onFaucet}
           onWithdraw={onWithdraw}
           relayerHealth={relayerHealth}
           sessionReady={sessionReady}
