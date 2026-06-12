@@ -65,6 +65,9 @@ contract SimplePlayground {
     uint256 public leaderboardEpochDuration = 5 days;
     uint256 public catRacePrepareDuration = 30 seconds;
     uint256 public catRaceRunDuration = 30 seconds;
+    uint256 public faucetAmount = 0.05 ether;
+    uint256 public faucetCooldown = 1 days;
+    uint256 public minWithdrawAmount = 0.11 ether;
     uint256 public constant MIN_LEADERBOARD_GAMES = 100;
 
     bytes32 public immutable DOMAIN_SEPARATOR;
@@ -74,6 +77,7 @@ contract SimplePlayground {
 
     mapping(address => bool) public trustedRelayers;
     mapping(address => uint256) public playerBalances;
+    mapping(address => uint256) public lastFaucetAt;
     mapping(bytes32 => uint256) public sessionSpent;
     mapping(bytes32 => bool) public serverSeedCommitments;
     mapping(uint256 => Round) public rounds;
@@ -97,6 +101,9 @@ contract SimplePlayground {
     event PoolWithdrawn(address indexed to, uint256 amount);
     event PlayerDeposited(address indexed player, uint256 amount, uint256 balance);
     event PlayerWithdrawn(address indexed player, uint256 amount, uint256 balance);
+    event FaucetClaimed(address indexed player, uint256 amount, uint256 nextClaimAt);
+    event FaucetSettingsUpdated(uint256 amount, uint256 cooldown);
+    event MinWithdrawUpdated(uint256 amount);
     event ServerSeedCommitted(bytes32 indexed serverSeedHash, address indexed relayer);
     event ServerSeedRevealed(bytes32 indexed serverSeedHash, bytes32 indexed nextServerSeedHash, address indexed relayer);
     event RoundSettled(
@@ -157,6 +164,20 @@ contract SimplePlayground {
 
     function poolLiquidity() public view returns (uint256) {
         return address(this).balance - totalPlayerBalances;
+    }
+
+    function faucetInfo(address player) external view returns (
+        uint256 amount,
+        uint256 cooldown,
+        uint256 lastClaimAt,
+        uint256 nextClaimAt,
+        bool available
+    ) {
+        amount = faucetAmount;
+        cooldown = faucetCooldown;
+        lastClaimAt = lastFaucetAt[player];
+        nextClaimAt = lastClaimAt + faucetCooldown;
+        available = player != address(0) && block.timestamp >= nextClaimAt && poolLiquidity() >= faucetAmount;
     }
 
     function sessionHash(
@@ -379,8 +400,21 @@ contract SimplePlayground {
         emit BetLimitsUpdated(nextMinBet, nextMaxBet);
     }
 
+    function setFaucetSettings(uint256 nextAmount, uint256 nextCooldown) external onlyOwner {
+        require(nextAmount <= 1 ether, "amount too high");
+        require(nextCooldown >= 1 hours && nextCooldown <= 30 days, "invalid cooldown");
+        faucetAmount = nextAmount;
+        faucetCooldown = nextCooldown;
+        emit FaucetSettingsUpdated(nextAmount, nextCooldown);
+    }
+
+    function setMinWithdrawAmount(uint256 nextAmount) external onlyOwner {
+        minWithdrawAmount = nextAmount;
+        emit MinWithdrawUpdated(nextAmount);
+    }
+
     function depositPool() external payable onlyOwner {
-        require(msg.value > 0, "zero deposit");
+        require(amount > 0, "zero deposit");
         emit PoolDeposited(msg.sender, msg.value);
     }
 
@@ -393,20 +427,44 @@ contract SimplePlayground {
     }
 
     function depositPlayer() external payable {
+        _depositPlayerFor(msg.sender, msg.value);
+    }
+
+    function depositPlayerFor(address player) external payable {
+        _depositPlayerFor(player, msg.value);
+    }
+
+    function _depositPlayerFor(address player, uint256 amount) private {
+        require(player != address(0), "zero player");
         require(msg.value > 0, "zero deposit");
-        playerBalances[msg.sender] += msg.value;
-        totalPlayerBalances += msg.value;
-        emit PlayerDeposited(msg.sender, msg.value, playerBalances[msg.sender]);
+        playerBalances[player] += amount;
+        totalPlayerBalances += amount;
+        emit PlayerDeposited(player, amount, playerBalances[player]);
     }
 
     function withdrawPlayer(uint256 amount) external {
         require(amount > 0, "zero withdraw");
+        require(amount >= minWithdrawAmount, "withdraw below minimum");
         require(playerBalances[msg.sender] >= amount, "insufficient balance");
         playerBalances[msg.sender] -= amount;
         totalPlayerBalances -= amount;
         (bool sent, ) = payable(msg.sender).call{value: amount}("");
         require(sent, "withdraw failed");
         emit PlayerWithdrawn(msg.sender, amount, playerBalances[msg.sender]);
+    }
+
+    function claimFaucetFor(address player) external onlyTrustedRelayer returns (uint256 amount) {
+        require(player != address(0), "zero player");
+        require(block.timestamp >= lastFaucetAt[player] + faucetCooldown, "faucet cooldown");
+        amount = faucetAmount;
+        require(amount > 0, "faucet disabled");
+        require(poolLiquidity() >= amount, "pool too low");
+
+        lastFaucetAt[player] = block.timestamp;
+        playerBalances[player] += amount;
+        totalPlayerBalances += amount;
+
+        emit FaucetClaimed(player, amount, block.timestamp + faucetCooldown);
     }
 
     function commitServerSeed(bytes32 serverSeedHash) external onlyTrustedRelayer {

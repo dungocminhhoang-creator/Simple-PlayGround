@@ -44,8 +44,11 @@ export function WalletBar({ wallet, isAdmin, onConnect, onDisconnect, onRefresh,
           </button>
         </div>
         <div className="wallet-safety-warning">
-          <ShieldAlert size={16} />
-          <span>Do not use your main wallet. Use a separate play wallet with limited SRW.</span>
+          <ShieldAlert size={21} />
+          <span>
+            <b>Security notice</b>
+            Do not use your main wallet. Use a separate play wallet with limited SRW.
+          </span>
         </div>
       </div>
       <div className="config-strip">

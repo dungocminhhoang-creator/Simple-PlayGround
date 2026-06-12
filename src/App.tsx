@@ -1,5 +1,5 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Cat, CheckCircle2, ChevronDown, ChevronRight, Coins, Crown, Dice5, Flag, Gauge, Gem, Hand, History, Landmark, Loader2, ReceiptText, Scissors, ShieldCheck, Trophy, WalletCards, X, Zap } from "lucide-react";
+import { ArrowRight, Cat, CheckCircle2, ChevronDown, ChevronRight, Coins, Copy, Crown, Dice5, Flag, Gauge, Gem, Gift, Hand, History, Landmark, Loader2, ReceiptText, Scissors, ShieldCheck, Trophy, WalletCards, X, Zap } from "lucide-react";
 import { AbstractProvider, BrowserProvider, Contract, JsonRpcProvider, formatEther, hexlify, parseEther, randomBytes } from "ethers";
 import { Brand } from "./components/Brand";
 import { BetSelector } from "./components/BetSelector";
@@ -18,6 +18,9 @@ type SettingsState = {
   winFeeBps: number;
   minBet: string;
   maxBet: string;
+  faucetAmount: string;
+  faucetCooldown: number;
+  minWithdrawAmount: string;
   poolBalance: string;
   owner: string;
   leaderboardCycleDays: number;
@@ -26,6 +29,9 @@ type SettingsState = {
 type AccountState = {
   gameBalance: string;
   sessionSpent: string;
+  faucetLastClaimAt: number;
+  faucetNextClaimAt: number;
+  faucetAvailable: boolean;
 };
 type RelayerHealth = {
   ok: boolean;
@@ -115,7 +121,7 @@ const AUTO_SESSION_DURATION_SECONDS = 30 * 24 * 60 * 60;
 const CAT_RACE_PREPARE_SECONDS = 30;
 const CAT_RACE_RUN_SECONDS = 30;
 const emptyWallet: WalletState = { provider: null, address: "", balance: "0", chainId: "" };
-const emptyAccount: AccountState = { gameBalance: "0", sessionSpent: "0" };
+const emptyAccount: AccountState = { gameBalance: "0", sessionSpent: "0", faucetLastClaimAt: 0, faucetNextClaimAt: 0, faucetAvailable: false };
 const emptyHealth: RelayerHealth = { ok: false, contractAddress: "", relayerAddress: "", trusted: false, currentSeedHash: "", seedCommitted: false };
 const defaultLeaderboardRewards = ["3", "2", "2", "1", "1", "1", "1", "1", "1", "1"];
 const publicProvider = new JsonRpcProvider(SIMPLE_RPC_URL, SIMPLE_CHAIN_ID);
@@ -141,6 +147,9 @@ const initialSettings: SettingsState = {
   winFeeBps: 500,
   minBet: "0.01",
   maxBet: "100",
+  faucetAmount: "0.05",
+  faucetCooldown: 86400,
+  minWithdrawAmount: "0.11",
   poolBalance: "0",
   owner: "",
   leaderboardCycleDays: 5,
@@ -196,6 +205,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [successPopup, setSuccessPopup] = useState<SuccessPopupState>(null);
+  const [copiedGameBalanceAddress, setCopiedGameBalanceAddress] = useState(false);
   const autoClaimedCatRaces = useRef<Set<string>>(new Set());
   const contractReady = Boolean(GAME_CONTRACT_ADDRESS);
 
@@ -401,16 +411,30 @@ export function App() {
     void loadPublicChainState();
   }
 
+  async function copyGameBalanceAddress() {
+    if (!wallet.address) {
+      setStatus({ tone: "warn", message: "Connect a wallet first to copy its game balance address." });
+      return;
+    }
+    await navigator.clipboard.writeText(wallet.address);
+    setCopiedGameBalanceAddress(true);
+    setStatus({ tone: "ok", message: "Game balance player address copied." });
+    window.setTimeout(() => setCopiedGameBalanceAddress(false), 1500);
+  }
+
   async function loadSettings(provider: AbstractProvider = publicProvider) {
     if (!contractReady) return;
 
     try {
       const contract = getPlaygroundContract(provider);
-      const [entryFeeBps, winFeeBps, minBet, maxBet, owner, poolBalance, leaderboardEpochDuration, leaderboardRewards] = await Promise.all([
+      const [entryFeeBps, winFeeBps, minBet, maxBet, faucetAmount, faucetCooldown, minWithdrawAmount, owner, poolBalance, leaderboardEpochDuration, leaderboardRewards] = await Promise.all([
         contract.entryFeeBps(),
         contract.winFeeBps(),
         contract.minBet(),
         contract.maxBet(),
+        contract.faucetAmount(),
+        contract.faucetCooldown(),
+        contract.minWithdrawAmount(),
         contract.owner(),
         contract.poolLiquidity(),
         contract.leaderboardEpochDuration(),
@@ -422,6 +446,9 @@ export function App() {
         winFeeBps: Number(winFeeBps),
         minBet: formatEther(minBet),
         maxBet: formatEther(maxBet),
+        faucetAmount: formatEther(faucetAmount),
+        faucetCooldown: Number(faucetCooldown),
+        minWithdrawAmount: formatEther(minWithdrawAmount),
         owner,
         poolBalance: formatEther(poolBalance),
         leaderboardCycleDays: Math.max(Math.round(Number(leaderboardEpochDuration) / 86400), 1),
@@ -537,15 +564,32 @@ export function App() {
       const contract = getPlaygroundContract(publicProvider);
       const gameBalance = await contract.playerBalances(address);
       let sessionSpent = 0n;
+      let faucetLastClaimAt = 0;
+      let faucetNextClaimAt = 0;
+      let faucetAvailable = false;
 
       if (session) {
         const sessionHash = await contract.sessionHash(address, session.relayer, parseEther(session.allowance), BigInt(session.expiresAt), BigInt(session.nonce));
         sessionSpent = await contract.sessionSpent(sessionHash);
       }
 
+      try {
+        const [, , lastClaimAt, nextClaimAt, available] = await contract.faucetInfo(address);
+        faucetLastClaimAt = Number(lastClaimAt);
+        faucetNextClaimAt = Number(nextClaimAt);
+        faucetAvailable = Boolean(available);
+      } catch {
+        faucetLastClaimAt = 0;
+        faucetNextClaimAt = 0;
+        faucetAvailable = false;
+      }
+
       setAccount({
         gameBalance: formatEther(gameBalance),
         sessionSpent: formatEther(sessionSpent),
+        faucetLastClaimAt,
+        faucetNextClaimAt,
+        faucetAvailable,
       });
     } catch (error) {
       setStatus({ tone: "warn", message: `Could not load player account: ${getErrorMessage(error)}` });
@@ -592,6 +636,10 @@ export function App() {
     const displayAmount = safeAmount(Number(amount || "0"));
 
     try {
+      if (Number(amount || "0") < Number(settings.minWithdrawAmount)) {
+        setStatus({ tone: "warn", message: `Minimum withdraw is ${safeAmount(Number(settings.minWithdrawAmount))} SRW.` });
+        return;
+      }
       setBusy(true);
       const signer = await wallet.provider.getSigner();
       const contract = new Contract(GAME_CONTRACT_ADDRESS, PLAYGROUND_ABI, signer);
@@ -600,6 +648,45 @@ export function App() {
       await tx.wait();
       setStatus({ tone: "ok", message: "SRW withdrawn to your wallet." });
       setSuccessPopup({ title: "Withdraw complete", amount: `${displayAmount} SRW`, detail: "Sent back to your wallet." });
+      await refreshChainState();
+    } catch (error) {
+      setStatus({ tone: "error", message: getErrorMessage(error) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function claimFaucet() {
+    if (!(await ensurePlayable()) || !wallet.address) return;
+    if (!relayerReady) {
+      setStatus({ tone: "warn", message: "Faucet requires the relayer to be online and trusted for IP protection." });
+      return;
+    }
+
+    try {
+      setBusy(true);
+      const response = await fetch(`${RELAYER_URL}/api/faucet`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ player: wallet.address }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || "Faucet request failed.");
+      }
+
+      const amount = String(payload.faucet?.amount ?? settings.faucetAmount);
+      if (payload.account?.gameBalance !== undefined) {
+        setAccount((current) => ({
+          ...current,
+          gameBalance: String(payload.account.gameBalance),
+          faucetLastClaimAt: Math.floor(Date.now() / 1000),
+          faucetNextClaimAt: Number(payload.faucet?.nextClaimAt ?? Math.floor(Date.now() / 1000) + settings.faucetCooldown),
+          faucetAvailable: false,
+        }));
+      }
+      setSuccessPopup({ title: "Faucet claimed", amount: `${safeAmount(Number(amount))} SRW`, detail: "Added directly to your game balance." });
+      setStatus({ tone: "ok", message: `Faucet added ${safeAmount(Number(amount))} SRW to your game balance.` });
       await refreshChainState();
     } catch (error) {
       setStatus({ tone: "error", message: getErrorMessage(error) });
@@ -723,6 +810,7 @@ export function App() {
         parsedResult = parseRelayerRound(payload.round, game);
         if (payload.account?.gameBalance !== undefined && payload.account?.sessionSpent !== undefined) {
           exactAccountAfterRound = {
+            ...account,
             gameBalance: String(payload.account.gameBalance),
             sessionSpent: String(payload.account.sessionSpent),
           };
@@ -989,6 +1077,16 @@ export function App() {
           <span>Your Game Balance</span>
           <strong>{Number(account.gameBalance).toFixed(4)} SRW</strong>
           <small>{sessionReady ? "Quick play ready" : relayerReady ? "Quick play available" : "Wallet play fallback ready"}</small>
+          <div className="game-balance-address">
+            <div>
+              <span>Player address</span>
+              <b>{wallet.address ? shortAddress(wallet.address) : "Connect wallet"}</b>
+            </div>
+            <button className="copy-address-button" disabled={!wallet.address} onClick={() => void copyGameBalanceAddress()} title="Copy player address" type="button">
+              {copiedGameBalanceAddress ? <CheckCircle2 size={15} /> : <Copy size={15} />}
+            </button>
+          </div>
+          <small className="balance-address-note">Other wallets can fund this game balance through depositPlayerFor.</small>
         </div>
       </aside>
 
@@ -1004,6 +1102,7 @@ export function App() {
             busy={busy}
             playing={playing}
             onDeposit={depositPlayer}
+            onFaucet={claimFaucet}
             onPlay={(choice, bet) => playGame("rps", choice, bet)}
             onWithdraw={withdrawPlayer}
             relayerHealth={relayerHealth}
@@ -1020,6 +1119,7 @@ export function App() {
             busy={busy}
             playing={playing}
             onDeposit={depositPlayer}
+            onFaucet={claimFaucet}
             onPlay={(choice, bet) => playGame("coin", choice, bet)}
             onWithdraw={withdrawPlayer}
             relayerHealth={relayerHealth}
@@ -1040,6 +1140,7 @@ export function App() {
             onBet={placeCatRaceBet}
             onClaim={settleCatRaceBet}
             onDeposit={depositPlayer}
+            onFaucet={claimFaucet}
             onWithdraw={withdrawPlayer}
             relayerHealth={relayerHealth}
             sessionReady={sessionReady}
@@ -1251,6 +1352,7 @@ type GamePageProps = {
   busy: boolean;
   playing: boolean;
   onDeposit: (amount: string) => void;
+  onFaucet: () => void;
   onPlay: (choice: number, bet: string) => void;
   onWithdraw: (amount: string) => void;
   relayerHealth: RelayerHealth;
@@ -1330,6 +1432,7 @@ function GameSurface({
   choices,
   history,
   onDeposit,
+  onFaucet,
   onPlay,
   onWithdraw,
   relayerHealth,
@@ -1402,11 +1505,13 @@ function GameSurface({
           busy={busy}
           depositAmount={depositAmount}
           onDeposit={onDeposit}
+          onFaucet={onFaucet}
           onWithdraw={onWithdraw}
           relayerHealth={relayerHealth}
           sessionReady={sessionReady}
           setDepositAmount={setDepositAmount}
           setWithdrawAmount={setWithdrawAmount}
+          settings={settings}
           withdrawAmount={withdrawAmount}
         />
         <div className={playMode === "quick" ? "play-mode play-mode--quick" : "play-mode play-mode--wallet"}>
@@ -1438,24 +1543,34 @@ function AccountPanel({
   busy,
   depositAmount,
   onDeposit,
+  onFaucet,
   onWithdraw,
   relayerHealth,
   sessionReady,
   setDepositAmount,
   setWithdrawAmount,
+  settings,
   withdrawAmount,
 }: {
   account: AccountState;
   busy: boolean;
   depositAmount: string;
   onDeposit: (amount: string) => void;
+  onFaucet: () => void;
   onWithdraw: (amount: string) => void;
   relayerHealth: RelayerHealth;
   sessionReady: boolean;
   setDepositAmount: (amount: string) => void;
   setWithdrawAmount: (amount: string) => void;
+  settings: SettingsState;
   withdrawAmount: string;
 }) {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const faucetRemaining = Math.max((account.faucetNextClaimAt || 0) - nowSeconds, 0);
+  const faucetReady = account.faucetAvailable || faucetRemaining === 0;
+  const faucetLabel = faucetReady ? `Faucet ${safeAmount(Number(settings.faucetAmount))} SRW` : `Faucet in ${formatDuration(faucetRemaining)}`;
+  const withdrawTooSmall = Number(withdrawAmount || "0") > 0 && Number(withdrawAmount || "0") < Number(settings.minWithdrawAmount);
+
   return (
     <div className="account-panel">
       <div className="account-header">
@@ -1463,14 +1578,20 @@ function AccountPanel({
         <strong>{Number(account.gameBalance).toFixed(4)} SRW</strong>
         <span>Game balance</span>
       </div>
+      <button className={faucetReady ? "faucet-action faucet-action--ready" : "faucet-action"} disabled={busy || !relayerHealth.ok || !faucetReady} onClick={onFaucet} type="button">
+        <Gift size={17} />
+        <span>{faucetLabel}</span>
+      </button>
+      <small className="account-note">Faucet goes to game balance. One wallet per 24h and one IP once.</small>
       <div className="mini-form">
         <input value={depositAmount} onChange={(event) => setDepositAmount(event.target.value)} />
         <button className="secondary-action" disabled={busy} onClick={() => onDeposit(depositAmount)} type="button">Deposit</button>
       </div>
       <div className="mini-form">
         <input value={withdrawAmount} onChange={(event) => setWithdrawAmount(event.target.value)} />
-        <button className="secondary-action" disabled={busy} onClick={() => onWithdraw(withdrawAmount)} type="button">Withdraw</button>
+        <button className="secondary-action" disabled={busy || withdrawTooSmall} onClick={() => onWithdraw(withdrawAmount)} type="button">Withdraw</button>
       </div>
+      <small className={withdrawTooSmall ? "account-note account-note--warn" : "account-note"}>Minimum withdraw {safeAmount(Number(settings.minWithdrawAmount))} SRW.</small>
       <div className={sessionReady ? "session-box session-box--ready" : "session-box"}>
         <div className="session-status-row">
           <strong>{sessionReady ? "Quick play ready" : "Quick play"}</strong>
@@ -1594,6 +1715,7 @@ function CatRacePage({
   onBet,
   onClaim,
   onDeposit,
+  onFaucet,
   onWithdraw,
   relayerHealth,
   sessionReady,
@@ -1607,6 +1729,7 @@ function CatRacePage({
   onBet: (cat: number, bet: string) => void;
   onClaim: (raceId: number) => void;
   onDeposit: (amount: string) => void;
+  onFaucet: () => void;
   onWithdraw: (amount: string) => void;
   relayerHealth: RelayerHealth;
   sessionReady: boolean;
@@ -1681,11 +1804,13 @@ function CatRacePage({
           busy={busy}
           depositAmount={depositAmount}
           onDeposit={onDeposit}
+          onFaucet={onFaucet}
           onWithdraw={onWithdraw}
           relayerHealth={relayerHealth}
           sessionReady={sessionReady}
           setDepositAmount={setDepositAmount}
           setWithdrawAmount={setWithdrawAmount}
+          settings={settings}
           withdrawAmount={withdrawAmount}
         />
         <div className="receipt">
@@ -2410,6 +2535,15 @@ function splitCountdown(totalSeconds: number) {
     minutes: padTime(minutes),
     seconds: padTime(seconds),
   };
+}
+
+function formatDuration(totalSeconds: number) {
+  const wholeSeconds = Math.ceil(Math.max(totalSeconds, 0));
+  const hours = Math.floor(wholeSeconds / 3600);
+  const minutes = Math.floor((wholeSeconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m`;
+  return `${wholeSeconds}s`;
 }
 
 function padTime(value: number) {

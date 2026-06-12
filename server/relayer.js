@@ -23,9 +23,11 @@ const ABI = [
   "function playRelayed((address player,uint8 gameType,uint8 playerMove,uint256 betAmount,bytes32 playerSeed,uint256 sessionAllowance,uint64 sessionExpiresAt,uint256 sessionNonce,bytes sessionSignature,bytes32 serverSeed,bytes32 nextServerSeedHash) play) returns (uint256)",
   "function startCatRace(uint256 raceId) returns (uint8)",
   "function settleCatRaceBetFor(uint256 raceId, address player) returns (uint256)",
+  "function claimFaucetFor(address player) returns (uint256)",
   "function catRaceRoundInfo(uint256 raceId) view returns (tuple(uint256 raceId,uint8 phase,uint256 startedAt,uint256 bettingEndsAt,uint256 endsAt,uint8 winnerCat,uint256[5] totalBets))",
   "event CatRaceStarted(uint256 indexed raceId, uint8 indexed winnerCat)",
   "event CatRaceSettled(uint256 indexed raceId, address indexed player, uint8 indexed winnerCat, uint256 payout)",
+  "event FaucetClaimed(address indexed player, uint256 amount, uint256 nextClaimAt)",
   "event RoundSettled(uint256 indexed roundId, address indexed player, uint8 gameType, uint256 betAmount, uint8 playerMove, uint8 outcome, uint8 result, uint256 payout)",
   "event RoundRandomness(uint256 indexed roundId, bytes32 indexed playerSeed, bytes32 indexed serverSeedHash)",
 ];
@@ -88,11 +90,14 @@ function loadState() {
       currentSeedHash: seedHash(firstSeed),
       committed: false,
       rounds: 0,
+      faucetIps: {},
     };
     saveState(state);
     return state;
   }
-  return JSON.parse(readFileSync(STATE_FILE, "utf8"));
+  const state = JSON.parse(readFileSync(STATE_FILE, "utf8"));
+  if (!state.faucetIps) state.faucetIps = {};
+  return state;
 }
 
 function saveState(state) {
@@ -165,6 +170,13 @@ function validatePlayRequest(body) {
   if (![0, 1].includes(Number(body.gameType))) throw new Error("Invalid gameType");
   if (Number(body.gameType) === 0 && ![0, 1].includes(Number(body.move))) throw new Error("Invalid move");
   if (Number(body.gameType) === 1 && ![0, 1, 2].includes(Number(body.move))) throw new Error("Invalid move");
+}
+
+function getClientIp(req) {
+  const forwardedFor = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  const realIp = String(req.headers["x-real-ip"] || "").trim();
+  const remoteIp = String(req.socket?.remoteAddress || "").trim();
+  return forwardedFor || realIp || remoteIp || "unknown";
 }
 
 const provider = new JsonRpcProvider(RPC_URL);
@@ -312,6 +324,68 @@ async function handleCatRaceClaim(body) {
   };
 }
 
+async function handleFaucet(body, req) {
+  if (!contract || !relayer) throw new Error("Relayer server is missing VITE_GAME_CONTRACT_ADDRESS or RELAYER_PRIVATE_KEY");
+  const player = String(body?.player || "");
+  if (!/^0x[a-fA-F0-9]{40}$/.test(player)) throw new Error("Missing player");
+
+  const ip = getClientIp(req);
+  if (state.faucetIps?.[ip]) {
+    throw new Error("This IP has already used the faucet.");
+  }
+
+  log("STEP", "Submitting faucet claim", {
+    profileId: player,
+    wallet: relayer.address,
+    step: "faucet",
+    style: "step",
+  });
+  const tx = await contract.claimFaucetFor(player);
+  log("INFO", `Faucet tx submitted ${tx.hash}`, { profileId: player, wallet: relayer.address, step: "faucet" });
+  const receipt = await tx.wait();
+
+  let faucet = null;
+  for (const logEntry of receipt.logs) {
+    try {
+      const parsed = contract.interface.parseLog(logEntry);
+      if (parsed?.name === "FaucetClaimed") {
+        faucet = {
+          player: parsed.args.player,
+          amount: formatEther(parsed.args.amount),
+          nextClaimAt: Number(parsed.args.nextClaimAt),
+          txHash: receipt.hash,
+          blockNumber: receipt.blockNumber,
+        };
+        break;
+      }
+    } catch {
+      // Ignore unrelated logs.
+    }
+  }
+  if (!faucet) throw new Error("FaucetClaimed event not found");
+
+  state = {
+    ...state,
+    faucetIps: {
+      ...(state.faucetIps || {}),
+      [ip]: {
+        player,
+        claimedAt: Math.floor(Date.now() / 1000),
+      },
+    },
+  };
+  saveState(state);
+
+  const gameBalance = await contract.playerBalances(player, { blockTag: receipt.blockNumber });
+  log("OK", "Faucet claim completed", { profileId: player, wallet: relayer.address, step: "faucet", style: "success" });
+  return {
+    faucet,
+    account: {
+      gameBalance: formatEther(gameBalance),
+    },
+  };
+}
+
 createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     jsonResponse(res, 204, {});
@@ -370,6 +444,13 @@ createServer(async (req, res) => {
     if (req.method === "POST" && req.url === "/api/cat-race/claim") {
       const body = await readBody(req);
       const result = await handleCatRaceClaim(body);
+      jsonResponse(res, 200, { ok: true, ...result });
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/faucet") {
+      const body = await readBody(req);
+      const result = await handleFaucet(body, req);
       jsonResponse(res, 200, { ok: true, ...result });
       return;
     }
