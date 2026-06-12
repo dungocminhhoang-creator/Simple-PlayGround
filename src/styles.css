@@ -2788,6 +2788,17 @@ button:disabled {
   color: var(--muted);
 }
 
+.faucet-history-panel {
+  border: 1px solid rgba(125, 229, 236, 0.16);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.history-toggle--static {
+  cursor: default;
+}
+
 .admin-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

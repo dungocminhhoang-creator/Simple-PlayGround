@@ -91,12 +91,14 @@ function loadState() {
       committed: false,
       rounds: 0,
       faucetIps: {},
+      faucetHistory: [],
     };
     saveState(state);
     return state;
   }
   const state = JSON.parse(readFileSync(STATE_FILE, "utf8"));
   if (!state.faucetIps) state.faucetIps = {};
+  if (!Array.isArray(state.faucetHistory)) state.faucetHistory = [];
   return state;
 }
 
@@ -373,6 +375,15 @@ async function handleFaucet(body, req) {
         claimedAt: Math.floor(Date.now() / 1000),
       },
     },
+    faucetHistory: [
+      {
+        player,
+        amount: faucet.amount,
+        claimedAt: Math.floor(Date.now() / 1000),
+        txHash: faucet.txHash,
+      },
+      ...(state.faucetHistory || []),
+    ].slice(0, 20),
   };
   saveState(state);
 
@@ -421,6 +432,7 @@ createServer(async (req, res) => {
         currentSeedHash: state.currentSeedHash,
         seedCommitted,
         seedCommitError,
+        recentFaucets: (state.faucetHistory || []).slice(0, 20),
       });
       return;
     }

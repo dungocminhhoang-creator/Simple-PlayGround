@@ -40,6 +40,13 @@ type RelayerHealth = {
   trusted: boolean;
   currentSeedHash: string;
   seedCommitted: boolean;
+  recentFaucets: FaucetHistoryEntry[];
+};
+type FaucetHistoryEntry = {
+  player: string;
+  amount: string;
+  claimedAt: number;
+  txHash?: string;
 };
 type RelayerSession = {
   relayer: string;
@@ -122,7 +129,7 @@ const CAT_RACE_PREPARE_SECONDS = 30;
 const CAT_RACE_RUN_SECONDS = 30;
 const emptyWallet: WalletState = { provider: null, address: "", balance: "0", chainId: "" };
 const emptyAccount: AccountState = { gameBalance: "0", sessionSpent: "0", faucetLastClaimAt: 0, faucetNextClaimAt: 0, faucetAvailable: false };
-const emptyHealth: RelayerHealth = { ok: false, contractAddress: "", relayerAddress: "", trusted: false, currentSeedHash: "", seedCommitted: false };
+const emptyHealth: RelayerHealth = { ok: false, contractAddress: "", relayerAddress: "", trusted: false, currentSeedHash: "", seedCommitted: false, recentFaucets: [] };
 const defaultLeaderboardRewards = ["3", "2", "2", "1", "1", "1", "1", "1", "1", "1"];
 const publicProvider = new JsonRpcProvider(SIMPLE_RPC_URL, SIMPLE_CHAIN_ID);
 const emptyLeaderboard: LeaderboardState = { epoch: 0, startedAt: 0, endsAt: 0, settled: false, rows: [], rewards: defaultLeaderboardRewards, cycleDays: 5, previousEpoch: 0, previousSettled: true, previousRows: [] };
@@ -353,8 +360,9 @@ export function App() {
     try {
       const response = await fetch(`${RELAYER_URL}/api/health`);
       const health = await response.json() as RelayerHealth;
-      setRelayerHealth(health);
-      return health;
+      const normalized = { ...health, recentFaucets: Array.isArray(health.recentFaucets) ? health.recentFaucets : [] };
+      setRelayerHealth(normalized);
+      return normalized;
     } catch {
       setRelayerHealth(emptyHealth);
       return emptyHealth;
@@ -1689,6 +1697,39 @@ function FaucetPage({
           {busy ? <Loader2 className="spin" size={18} /> : <Gift size={18} />}
           Claim Faucet
         </button>
+      </div>
+
+      <div className="faucet-history-panel">
+        <div className="history-toggle history-toggle--static">
+          <span><History size={17} /> Recent Faucet Claims</span>
+          <small>{relayerHealth.recentFaucets.length}/20</small>
+        </div>
+        <div className="history-table-wrap">
+          {relayerHealth.recentFaucets.length === 0 ? (
+            <div className="history-empty">No faucet claims yet.</div>
+          ) : (
+            <table className="history-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Wallet</th>
+                  <th>Amount</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {relayerHealth.recentFaucets.slice(0, 20).map((item, index) => (
+                  <tr key={`${item.player}-${item.claimedAt}-${index}`}>
+                    <td>{index + 1}</td>
+                    <td>{shortAddress(item.player)}</td>
+                    <td>{safeAmount(Number(item.amount))} SRW</td>
+                    <td>{item.claimedAt ? new Date(item.claimedAt * 1000).toLocaleString() : "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
     </section>
   );
