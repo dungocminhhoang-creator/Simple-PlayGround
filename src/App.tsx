@@ -2139,6 +2139,8 @@ function AdminPage({
 }) {
   const [entryFee, setEntryFee] = useState(String(settings.entryFeeBps / 100));
   const [winFee, setWinFee] = useState(String(settings.winFeeBps / 100));
+  const [minBet, setMinBet] = useState(settings.minBet);
+  const [maxBet, setMaxBet] = useState(settings.maxBet);
   const [deposit, setDeposit] = useState("10");
   const [withdraw, setWithdraw] = useState("1");
   const [cycleDays, setCycleDays] = useState(String(settings.leaderboardCycleDays));
@@ -2148,11 +2150,13 @@ function AdminPage({
   useEffect(() => {
     setEntryFee(String(settings.entryFeeBps / 100));
     setWinFee(String(settings.winFeeBps / 100));
+    setMinBet(settings.minBet);
+    setMaxBet(settings.maxBet);
     setCycleDays(String(settings.leaderboardCycleDays));
     setLeaderboardRewards(settings.leaderboardRewards);
-  }, [settings.entryFeeBps, settings.winFeeBps, settings.leaderboardCycleDays, settings.leaderboardRewards]);
+  }, [settings.entryFeeBps, settings.winFeeBps, settings.minBet, settings.maxBet, settings.leaderboardCycleDays, settings.leaderboardRewards]);
 
-  async function runAdmin(action: "fees" | "deposit" | "withdraw" | "trustRelayer" | "leaderboardRewards" | "leaderboardCycle") {
+  async function runAdmin(action: "fees" | "betLimits" | "deposit" | "withdraw" | "trustRelayer" | "leaderboardRewards" | "leaderboardCycle") {
     if (!contractReady || !provider) {
       setStatus({ tone: "warn", message: "Connect a wallet and configure the game contract first." });
       return;
@@ -2165,6 +2169,8 @@ function AdminPage({
       const tx =
         action === "fees"
           ? await contract.setFees(Math.round(Number(entryFee) * 100), Math.round(Number(winFee) * 100))
+          : action === "betLimits"
+            ? await contract.setBetLimits(parseEther(minBet || "0"), parseEther(maxBet || "0"))
           : action === "deposit"
             ? await contract.depositPool({ value: parseEther(deposit || "0") })
             : action === "trustRelayer"
@@ -2214,6 +2220,21 @@ function AdminPage({
             </label>
             <button className="primary-action" disabled={busy} onClick={() => runAdmin("fees")} type="button">
               <Crown size={18} /> Save Fees
+            </button>
+          </div>
+        )}
+        {isAdmin && (
+          <div className="admin-grid">
+            <label className="number-field">
+              <span>Min bet SRW</span>
+              <input value={minBet} onChange={(event) => setMinBet(event.target.value)} />
+            </label>
+            <label className="number-field">
+              <span>Max bet SRW</span>
+              <input value={maxBet} onChange={(event) => setMaxBet(event.target.value)} />
+            </label>
+            <button className="secondary-action" disabled={busy} onClick={() => runAdmin("betLimits")} type="button">
+              Save Bet Limits
             </button>
           </div>
         )}
@@ -2285,6 +2306,8 @@ function AdminPage({
             <div><dt>Relayer trust</dt><dd>{relayerHealth.trusted ? "Trusted" : "Not trusted"}</dd></div>
             <div><dt>Seed status</dt><dd>{relayerHealth.seedCommitted ? "Committed" : "Pending"}</dd></div>
             <div><dt>Permission</dt><dd>{isAdmin ? "Admin" : "Read only"}</dd></div>
+            <div><dt>Min bet</dt><dd>{safeAmount(Number(settings.minBet))} SRW</dd></div>
+            <div><dt>Max bet</dt><dd>{safeAmount(Number(settings.maxBet))} SRW</dd></div>
             <div><dt>Leaderboard cycle</dt><dd>{settings.leaderboardCycleDays} days</dd></div>
             <div><dt>Pool liquidity</dt><dd>{Number(settings.poolBalance).toFixed(4)} SRW</dd></div>
           </dl>
